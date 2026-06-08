@@ -31,7 +31,8 @@ Compliance is a *stack*, not one document. This repo implements the core of it a
 
 Full mapping with requirement traceability: **[`docs/COMPLIANCE.md`](docs/COMPLIANCE.md)**,
 **[`docs/TRACEABILITY.md`](docs/TRACEABILITY.md)** (capability → code → test), and
-**[`docs/CONFORMANCE.md`](docs/CONFORMANCE.md)** (how to run the external conformance suites).
+**[`docs/CONFORMANCE.md`](docs/CONFORMANCE.md)** (how to run the external conformance suites), and
+**[`docs/PRODUCTIONIZATION.md`](docs/PRODUCTIONIZATION.md)** (what a real Suomi.fi Wallet needs beyond this reference).
 
 ## Architecture
 
