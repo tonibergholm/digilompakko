@@ -1,0 +1,178 @@
+/**
+ * OpenID4VCI 1.0 issuer (PID provider) — pre-authorized code flow + Token Status List.
+ *
+ * Endpoints (each maps to an OpenID4VCI / Status List clause):
+ *   GET  /.well-known/openid-credential-issuer   issuer metadata + JWKS
+ *   POST /offer                                   create a Credential Offer (demo helper)
+ *   POST /token                                   pre-auth code -> access_token + c_nonce
+ *   POST /credential                              verify holder PoP -> SD-JWT VC (with status)
+ *   GET  /statuslist                              signed Status List Token (statuslist+jwt)
+ *   POST /admin/revoke                            { idx } -> mark a credential revoked (demo admin)
+ *
+ * NOTE: in-memory state, software keys — demo only. See docs/COMPLIANCE.md §6.
+ */
+import express from "express";
+import { randomUUID } from "node:crypto";
+import { importJWK, jwtVerify, type JWK } from "jose";
+import {
+  generateP256KeyPair,
+  issueSdJwtVc,
+  StatusList,
+  buildStatusListToken,
+  STATUS_INVALID,
+  Oid4vcError,
+  sendError,
+  ALG,
+  type CredentialClaims,
+} from "@digilompakko/core";
+
+const PORT = Number(process.env.ISSUER_PORT ?? 4001);
+const ISSUER_URL = process.env.ISSUER_URL ?? `http://localhost:${PORT}`;
+const STATUS_URI = `${ISSUER_URL}/statuslist`;
+const PID_CONFIG_ID = "eu.europa.ec.eudi.pid.1";
+
+const app = express();
+app.use(express.json());
+
+// --- Issuer signing key (generated at startup; published via JWKS) ---
+const issuerKeys = await generateP256KeyPair();
+
+// --- Status list (one shared list for the demo) ---
+const statusList = new StatusList(1024);
+let nextStatusIdx = 0;
+interface IssuedRecord { idx: number; subject: string; issuedAt: number }
+const issuedRecords: IssuedRecord[] = [];
+
+// --- In-memory issuance stores ---
+interface Pending { claims: CredentialClaims; cNonce?: string; accessToken?: string }
+const offers = new Map<string, Pending>();
+const tokens = new Map<string, string>();
+
+const DEMO_PID: CredentialClaims = {
+  vct: PID_CONFIG_ID,
+  claims: {
+    given_name: "Toni",
+    family_name: "Bergholm",
+    birthdate: "1985-04-12",
+    nationality: "FI",
+    age_over_18: true,
+  },
+  alwaysDisclosed: { issuing_country: "FI", issuing_authority: "DVV (demo)" },
+  expiresInSeconds: 60 * 60 * 24 * 365,
+};
+
+// 1) Issuer metadata
+app.get("/.well-known/openid-credential-issuer", (_req, res) => {
+  res.json({
+    credential_issuer: ISSUER_URL,
+    credential_endpoint: `${ISSUER_URL}/credential`,
+    token_endpoint: `${ISSUER_URL}/token`,
+    status_list_endpoint: STATUS_URI,
+    jwks: { keys: [issuerKeys.publicJwk] },
+    credential_configurations_supported: {
+      [PID_CONFIG_ID]: {
+        format: "dc+sd-jwt",
+        vct: PID_CONFIG_ID,
+        cryptographic_binding_methods_supported: ["jwk"],
+        credential_signing_alg_values_supported: [ALG],
+        proof_types_supported: { jwt: { proof_signing_alg_values_supported: [ALG] } },
+      },
+    },
+  });
+});
+
+// 2) Create a Credential Offer (pre-authorized code flow)
+app.post("/offer", (_req, res) => {
+  const preAuthCode = randomUUID();
+  offers.set(preAuthCode, { claims: structuredClone(DEMO_PID) });
+  res.json({
+    credential_issuer: ISSUER_URL,
+    credential_configuration_ids: [PID_CONFIG_ID],
+    grants: {
+      "urn:ietf:params:oauth:grant-type:pre-authorized_code": { "pre-authorized_code": preAuthCode },
+    },
+  });
+});
+
+// 3) Token endpoint
+app.post("/token", (req, res) => {
+  try {
+    const code = req.body?.["pre-authorized_code"];
+    const pending = code && offers.get(code);
+    if (!pending) throw new Oid4vcError("invalid_grant", "unknown or used pre-authorized_code");
+    const accessToken = randomUUID();
+    const cNonce = randomUUID();
+    pending.accessToken = accessToken;
+    pending.cNonce = cNonce;
+    tokens.set(accessToken, code);
+    res.json({ access_token: accessToken, token_type: "bearer", expires_in: 300, c_nonce: cNonce });
+  } catch (e) {
+    sendError(res, e);
+  }
+});
+
+// 4) Credential endpoint — verify holder PoP, assign a status index, then issue.
+app.post("/credential", async (req, res) => {
+  try {
+    const accessToken = (req.header("authorization") ?? "").replace(/^Bearer\s+/i, "");
+    const code = tokens.get(accessToken);
+    const pending = code ? offers.get(code) : undefined;
+    if (!pending) throw new Oid4vcError("invalid_token", "unknown access token", 401);
+
+    const proofJwt: string | undefined = req.body?.proof?.jwt;
+    if (!proofJwt) throw new Oid4vcError("invalid_proof", "missing proof.jwt");
+
+    // Verify holder Proof-of-Possession (key in JWT header, bound to c_nonce + audience).
+    let holderJwk: JWK;
+    try {
+      const header = JSON.parse(Buffer.from(proofJwt.split(".")[0], "base64url").toString("utf8"));
+      holderJwk = header.jwk;
+      if (!holderJwk) throw new Error("no jwk in proof header");
+      const key = await importJWK(holderJwk, ALG);
+      const { payload } = await jwtVerify(proofJwt, key, { typ: "openid4vci-proof+jwt" });
+      if (payload.nonce !== pending.cNonce) throw new Error("c_nonce mismatch");
+      if (payload.aud !== ISSUER_URL) throw new Error("aud mismatch");
+    } catch (e) {
+      throw new Oid4vcError("invalid_proof", (e as Error).message);
+    }
+
+    // Assign a Token Status List entry so this credential can later be revoked.
+    const idx = nextStatusIdx++;
+    issuedRecords.push({ idx, subject: String(pending.claims.claims.family_name ?? "unknown"), issuedAt: Date.now() });
+    pending.claims.alwaysDisclosed = {
+      ...pending.claims.alwaysDisclosed,
+      status: { status_list: { idx, uri: STATUS_URI } },
+    };
+
+    const issued = await issueSdJwtVc(issuerKeys.privateJwk, ISSUER_URL, holderJwk, pending.claims);
+
+    offers.delete(code!);
+    tokens.delete(accessToken);
+    res.json({ credential: issued.sdJwt, format: "dc+sd-jwt", status_index: idx });
+  } catch (e) {
+    sendError(res, e);
+  }
+});
+
+// 5) Status List Token endpoint.
+app.get("/statuslist", async (_req, res) => {
+  const token = await buildStatusListToken(issuerKeys.privateJwk, ISSUER_URL, STATUS_URI, statusList);
+  res.type("application/statuslist+jwt").send(token);
+});
+
+// 6) Admin: revoke a credential by its status index (demo only — no auth).
+app.post("/admin/revoke", (req, res) => {
+  try {
+    const idx = Number(req.body?.idx);
+    if (!Number.isInteger(idx)) throw new Oid4vcError("invalid_request", "idx must be an integer");
+    statusList.set(idx, STATUS_INVALID);
+    res.json({ ok: true, idx, status: "revoked" });
+  } catch (e) {
+    sendError(res, e);
+  }
+});
+
+// 7) Admin: list issued records (demo helper).
+app.get("/admin/issued", (_req, res) => res.json(issuedRecords));
+
+app.listen(PORT, () => console.log(`[issuer]   OpenID4VCI issuer + status list on ${ISSUER_URL}`));

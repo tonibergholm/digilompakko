@@ -1,0 +1,14 @@
+# Woodpecker CI config for Codeberg.
+# Mirrors the GitHub Actions pipeline: build + test + smoke demo.
+when:
+  - event: [push, pull_request]
+    branch: main
+
+steps:
+  build-and-test:
+    image: node:22
+    commands:
+      - npm ci
+      - npm run build
+      - npm test
+      - npm run demo

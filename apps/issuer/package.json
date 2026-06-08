@@ -1,0 +1,16 @@
+{
+  "name": "@digilompakko/issuer",
+  "version": "0.1.0",
+  "description": "OpenID4VCI 1.0 credential issuer (PID provider) for the Digilompakko demo.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "scripts": {
+    "start": "tsx src/server.ts",
+    "build": "tsc --build"
+  },
+  "dependencies": {
+    "@digilompakko/core": "*",
+    "express": "^5.0.0",
+    "jose": "^5.9.0"
+  }
+}

@@ -1,0 +1,45 @@
+/**
+ * Trust resolution.
+ *
+ * In the real EUDI ecosystem, a verifier decides whether to trust an issuer by consulting the
+ * EU/Member-State **Trusted Lists** (and the Registrar). This module abstracts that decision
+ * behind a `TrustResolver` so the demo can ship a simple allow-list today and swap in a real
+ * Trusted List client later without touching the verifier.
+ */
+import type { JWK } from "jose";
+import { Oid4vcError } from "./errors.js";
+
+export interface TrustResolver {
+  /** Return the issuer's signing key if the issuer is trusted; throw otherwise. */
+  resolveIssuerKey(issuer: string): Promise<JWK>;
+}
+
+/**
+ * Demo resolver: trusts only issuers on an explicit allow-list, and fetches their signing key
+ * from the issuer's published OpenID4VCI metadata (`/.well-known/openid-credential-issuer`).
+ * Keys are cached after first resolution.
+ */
+export class StaticTrustResolver implements TrustResolver {
+  private cache = new Map<string, JWK>();
+  constructor(private readonly trustedIssuers: string[]) {}
+
+  async resolveIssuerKey(issuer: string): Promise<JWK> {
+    if (!this.trustedIssuers.includes(issuer)) {
+      throw new Oid4vcError("untrusted_issuer", `issuer not on trusted list: ${issuer}`, 403);
+    }
+    const cached = this.cache.get(issuer);
+    if (cached) return cached;
+
+    let key: JWK | undefined;
+    try {
+      const res = await fetch(`${issuer}/.well-known/openid-credential-issuer`);
+      const meta = (await res.json()) as { jwks?: { keys?: JWK[] } };
+      key = meta?.jwks?.keys?.[0];
+    } catch (e) {
+      throw new Oid4vcError("untrusted_issuer", `cannot fetch issuer metadata: ${(e as Error).message}`, 502);
+    }
+    if (!key) throw new Oid4vcError("untrusted_issuer", "issuer metadata has no JWKS key");
+    this.cache.set(issuer, key);
+    return key;
+  }
+}
