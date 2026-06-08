@@ -6,6 +6,15 @@ All notable changes to this project are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Added — Phase 2: second credential format (ISO 18013-5 mdoc/mDL)
+- **mdoc/mDL** (`packages/core/src/mdoc.ts`): CBOR + COSE_Sign1 (`mso_mdoc`) issuance and
+  verification with per-item selective disclosure (random salts + SHA-256 value digests in the MSO).
+- **Device binding** via a `deviceAuth` COSE_Sign1 over a nonce-bound DeviceAuthentication
+  structure (the mdoc analogue of the SD-JWT Key Binding JWT).
+- Issuer metadata now advertises both `dc+sd-jwt` and `mso_mdoc` (format negotiation).
+- Headless demo and tests cover mdoc selective disclosure, replay, forged-issuer, and device binding.
+- Documented 18013-5 simplifications (SessionTranscript, `deviceSignature`-only) in COMPLIANCE §6.
+
 ### Added — Phase 1: trust & lifecycle
 - **Token Status List** (`packages/core/src/status-list.ts`): build/read signed `statuslist+jwt`
   tokens with DEFLATE-compressed bitstrings.

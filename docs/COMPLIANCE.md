@@ -23,7 +23,7 @@ no single "the spec" — compliance is a *stack*:
 | Issuance | **OpenID for Verifiable Credential Issuance (OpenID4VCI) 1.0** | How the issuer hands credentials to the wallet. |
 | Presentation | **OpenID for Verifiable Presentations (OpenID4VP) 1.0** | How a verifier requests and the wallet presents credentials. |
 | Credential format A | **IETF SD-JWT VC** (`dc+sd-jwt`) | Selective-disclosure JSON credential format. **Primary format in this demo.** |
-| Credential format B | **ISO/IEC 18013-5 mdoc / mDL** (`mso_mdoc`) | Binary CBOR/COSE format, esp. mobile driving licence. *Roadmap.* |
+| Credential format B | **ISO/IEC 18013-5 mdoc / mDL** (`mso_mdoc`) | Binary CBOR/COSE format, esp. mobile driving licence. **Implemented (subset).** |
 | Query | **DCQL** (Digital Credentials Query Language) | How a verifier expresses *what* it wants. |
 | Status | **IETF Token Status List** | Credential revocation/suspension. *Roadmap.* |
 | Crypto | **ES256 / P-256** mandated by HAIP | Signing + holder key binding. |
@@ -123,7 +123,8 @@ holder binding, replay protection, and minimal disclosure.
 | Pluggable trust resolution (allow-list today) | `core/src/trust.ts` `StaticTrustResolver` | ✅ demo |
 | Structured error model | `core/src/errors.ts` `Oid4vcError` | ✅ demo |
 | Credential expiry enforcement | `core/src/sd-jwt.ts` (`exp`) | ✅ demo |
-| ISO 18013-5 mdoc / mDL | — | ⬜ roadmap |
+| ISO 18013-5 mdoc / mDL (`mso_mdoc`, CBOR/COSE_Sign1) | `core/src/mdoc.ts`; issuer advertises `mso_mdoc` | ✅ demo (subset) |
+| mdoc device binding (deviceAuth over nonce) | `core/src/mdoc.ts` | ✅ demo |
 | Real Trusted Lists / Registrar | `TrustResolver` interface ready; static for now | 🟡 interface only |
 | WSCD / secure element key storage | — | ⬜ roadmap (keys in software for demo) |
 
@@ -137,7 +138,11 @@ A production EUDI wallet additionally requires, and this demo deliberately does 
 2. **Real PID issuance** tied to a national eID and the Population Information System (DVV's domain).
 3. **Trust infrastructure**: Trusted Lists, the EU Registrar, Relying Party registration & access certs.
 4. **Revocation** (Token Status List) and key/credential lifecycle management.
-5. **mdoc / ISO 18013-5** and **proximity presentation** (BLE/NFC, ISO 18013-7 for online).
+5. **Proximity presentation** (BLE/NFC device retrieval, ISO 18013-7 for online). The `mso_mdoc`
+   credential format itself is implemented (`core/src/mdoc.ts`), but as a **subset**: the
+   SessionTranscript is simplified to bind audience+nonce (not the full 18013-5 device-engagement
+   transcript), only `deviceSignature` (not `deviceMac`) is supported, and there is no
+   over-the-wire device retrieval. These are documented simplifications, not silent gaps.
 6. **Formal conformance testing** against the EU Launchpad / OpenID conformance suites and a CAB audit.
 
 The architecture is structured so each of these is an additive module, not a rewrite. See `ROADMAP.md`.

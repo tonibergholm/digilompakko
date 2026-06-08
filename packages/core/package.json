@@ -16,6 +16,7 @@
     "build": "tsc --build"
   },
   "dependencies": {
+    "cbor-x": "^1.5.9",
     "jose": "^5.9.0"
   }
 }

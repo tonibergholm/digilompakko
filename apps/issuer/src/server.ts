@@ -77,6 +77,14 @@ app.get("/.well-known/openid-credential-issuer", (_req, res) => {
         credential_signing_alg_values_supported: [ALG],
         proof_types_supported: { jwt: { proof_signing_alg_values_supported: [ALG] } },
       },
+      // Format negotiation: the same issuer also advertises an ISO 18013-5 mDL (mso_mdoc).
+      "org.iso.18013.5.1.mDL": {
+        format: "mso_mdoc",
+        doctype: "org.iso.18013.5.1.mDL",
+        cryptographic_binding_methods_supported: ["cose_key"],
+        credential_signing_alg_values_supported: [ALG],
+        proof_types_supported: { jwt: { proof_signing_alg_values_supported: [ALG] } },
+      },
     },
   });
 });

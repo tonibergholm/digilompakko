@@ -20,9 +20,11 @@ Status legend: ✅ done in demo · 🟡 partial · ⬜ planned
 - ⬜ Real Trusted List client (replace the static allow-list)
 
 ## Phase 2 — Second credential format
-- ⬜ ISO/IEC 18013-5 mdoc / mDL issuance & verification (`mso_mdoc`)
-- ⬜ CBOR/COSE support in `core`
-- ⬜ Format negotiation in issuer metadata
+- ✅ ISO/IEC 18013-5 mdoc / mDL issuance & verification (`mso_mdoc`), subset
+- ✅ CBOR/COSE_Sign1 support in `core` (`mdoc.ts`), ES256 device binding
+- ✅ Format negotiation in issuer metadata (advertises `dc+sd-jwt` and `mso_mdoc`)
+- 🟡 mdoc over OpenID4VCI/VP HTTP wire (core + headless demo done; full HTTP wiring TODO)
+- ⬜ Full 18013-5 SessionTranscript + `deviceMac` variant
 
 ## Phase 3 — Real-world hardening
 - ⬜ WSCD abstraction (secure element / TEE / HSM) for key storage
