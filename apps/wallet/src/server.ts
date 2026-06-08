@@ -28,6 +28,16 @@ app.post("/api/get-credential", async (_req, res) => {
   }
 });
 
+// Step 1b: obtain a credential via the Authorization Code + PAR + PKCE flow.
+app.post("/api/get-credential-authcode", async (_req, res) => {
+  try {
+    const stored = await wallet.acceptViaAuthCode(ISSUER_URL);
+    res.json({ ok: true, vct: stored.vct, count: wallet.credentials.length, flow: "authorization_code+PAR+PKCE" });
+  } catch (e) {
+    res.status(400).json({ ok: false, error: (e as Error).message });
+  }
+});
+
 // Step 2: respond to a verifier presentation request.
 app.post("/api/present", async (req, res) => {
   try {
@@ -64,7 +74,8 @@ const UI = /* html */ `<!doctype html>
 <div class="card">
   <h2>1 · Get your PID credential</h2>
   <p class="muted">Wallet redeems a credential offer from the issuer and stores an SD-JWT VC bound to your holder key.</p>
-  <button id="get">Receive credential</button>
+  <button id="get">Receive credential (pre-auth)</button>
+  <button id="getAuth">Receive via Auth Code + PAR + PKCE</button>
   <p id="getOut"></p>
 </div>
 
@@ -82,12 +93,14 @@ const UI = /* html */ `<!doctype html>
 
 <script>
 const $ = (s) => document.querySelector(s);
-$("#get").onclick = async () => {
-  $("#get").disabled = true; $("#getOut").textContent = "Requesting…";
-  const r = await (await fetch("/api/get-credential", {method:"POST"})).json();
-  if (r.ok) { $("#getOut").innerHTML = '<span class="ok">✓ stored ' + r.vct + '</span>'; $("#present").disabled = false; }
-  else { $("#getOut").innerHTML = '<span class="bad">✗ ' + r.error + '</span>'; $("#get").disabled = false; }
-};
+async function getCredential(endpoint) {
+  $("#get").disabled = true; $("#getAuth").disabled = true; $("#getOut").textContent = "Requesting…";
+  const r = await (await fetch(endpoint, {method:"POST"})).json();
+  if (r.ok) { $("#getOut").innerHTML = '<span class="ok">✓ stored ' + r.vct + (r.flow ? ' via ' + r.flow : '') + '</span>'; $("#present").disabled = false; }
+  else { $("#getOut").innerHTML = '<span class="bad">✗ ' + r.error + '</span>'; $("#get").disabled = false; $("#getAuth").disabled = false; }
+}
+$("#get").onclick = () => getCredential("/api/get-credential");
+$("#getAuth").onclick = () => getCredential("/api/get-credential-authcode");
 $("#present").onclick = async () => {
   const reveal = [...document.querySelectorAll(".rev:checked")].map(c=>c.value);
   $("#present").disabled = true;

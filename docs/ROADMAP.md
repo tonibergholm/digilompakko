@@ -27,12 +27,18 @@ Status legend: ✅ done in demo · 🟡 partial · ⬜ planned
 - ⬜ Full 18013-5 SessionTranscript + `deviceMac` variant
 
 ## Phase 3 — Real-world hardening
-- ⬜ WSCD abstraction (secure element / TEE / HSM) for key storage
-- ⬜ Authorization Code flow + PAR (in addition to pre-auth)
-- ⬜ Relying Party registration & access certificates
-- ⬜ Proximity flows (ISO 18013-5 BLE) and online (ISO 18013-7)
+- ✅ WSCD key-storage abstraction (`WalletKeyStore`/`SoftwareKeyStore`, `JwsSigner`) — private keys
+  never leave the store; credential APIs sign via the keystore
+- ✅ Authorization Code flow + PAR (RFC 9126) + PKCE (RFC 7636), alongside pre-auth
+- ✅ Relying Party registration + attribute-entitlement gate (`RelyingPartyRegistry`)
+- 🟡 Access certificates (X.509 + Trusted List) for RPs — registry models the gate; certs are future
+- ⬜ Hardware-backed WSCD implementation (secure element / TEE / HSM)
+- ⬜ Proximity flows (ISO 18013-5 BLE/NFC device retrieval) and online (ISO 18013-7) — require
+  mobile hardware; the `mso_mdoc` format and device binding exist, the radio transport does not
 
 ## Phase 4 — Conformance
-- ⬜ OpenID Foundation conformance test integration
-- ⬜ EU Launchpad interop testing
-- ⬜ Documented mapping to ARF requirement IDs (full traceability matrix)
+- ✅ Requirement traceability matrix (capability → spec → code → test): `docs/TRACEABILITY.md`
+- ✅ Conformance & interoperability testing guide: `docs/CONFORMANCE.md`
+- 🟡 Documented mapping to exact ARF requirement IDs (matrix maps by capability; per-ID pinning ongoing)
+- ⬜ Recorded OpenID Foundation conformance-suite runs (`docs/conformance-runs/`)
+- ⬜ EU Launchpad interop event results

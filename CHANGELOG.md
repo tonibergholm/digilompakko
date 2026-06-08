@@ -6,6 +6,25 @@ All notable changes to this project are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Added — Phase 4: conformance documentation
+- **Requirement traceability matrix** (`docs/TRACEABILITY.md`): capability → spec → code → test
+  across formats, issuance, presentation, trust/revocation/keys, RP governance, and crypto.
+- **Conformance & interoperability testing guide** (`docs/CONFORMANCE.md`): how to point the OpenID
+  Foundation conformance suite and the EU Launchpad at the services, plus the path to certification.
+
+### Added — Phase 3: real-world hardening
+- **WSCD key-storage abstraction** (`packages/core/src/keystore.ts`): `WalletKeyStore` / `JwsSigner`
+  / `SoftwareKeyStore`. Private keys never leave the store; the SD-JWT VC and mdoc credential APIs
+  now accept a `JWK | JwsSigner`, so the wallet signs through the keystore (WSCD boundary).
+- **Authorization Code flow** with **PAR** (RFC 9126) and **PKCE** (RFC 7636), alongside the
+  pre-authorized code flow: issuer `/par`, `/authorize`, and an `authorization_code` token grant;
+  `core/src/pkce.ts` with S256 verification.
+- **Relying Party registration** (`core/src/rp-registry.ts`): registry + attribute-entitlement gate
+  enforcing data minimisation; verifier exposes `/rp/:clientId` and self-checks entitlement.
+- Wallet refactored onto the keystore; UI offers both issuance flows. Issuer metadata advertises
+  the authorization and PAR endpoints.
+- Tests for keystore signing/non-export, end-to-end keystore holder, PKCE, and RP entitlement.
+
 ### Added — Phase 2: second credential format (ISO 18013-5 mdoc/mDL)
 - **mdoc/mDL** (`packages/core/src/mdoc.ts`): CBOR + COSE_Sign1 (`mso_mdoc`) issuance and
   verification with per-item selective disclosure (random salts + SHA-256 value digests in the MSO).

@@ -13,6 +13,7 @@
 import { SignJWT, jwtVerify, importJWK, decodeJwt, decodeProtectedHeader, type JWK } from "jose";
 import { ALG, SD_JWT_VC_TYP, type CredentialClaims, type IssuedCredential, type VerificationResult } from "./types.js";
 import { b64url, sha256b64url, newSalt } from "./crypto.js";
+import { asSigner, type JwsSigner } from "./keystore.js";
 
 const SD_ALG = "sha-256";
 
@@ -88,11 +89,12 @@ function decodeDisclosure(encoded: string): { salt: string; name: string; value:
  */
 export async function createPresentation(
   issuedSdJwt: string,
-  holderPrivateJwk: JWK,
+  holder: JWK | JwsSigner,
   claimsToReveal: string[],
   audience: string,
   nonce: string,
 ): Promise<string> {
+  const signer = asSigner(holder);
   const { jws, disclosures } = parseCompact(issuedSdJwt);
   const kept = disclosures.filter((d) => claimsToReveal.includes(decodeDisclosure(d).name));
 
@@ -100,11 +102,11 @@ export async function createPresentation(
   const presentationHead = [jws, ...kept].join("~") + "~";
   const sdHash = sha256b64url(presentationHead);
 
-  const key = await importJWK(holderPrivateJwk, ALG);
-  const kbJwt = await new SignJWT({ nonce, aud: audience, sd_hash: sdHash })
-    .setProtectedHeader({ alg: ALG, typ: "kb+jwt" })
-    .setIssuedAt()
-    .sign(key);
+  // Signed inside the keystore (WSCD boundary) — the private key is never handled here.
+  const kbJwt = await signer.signJwt(
+    { alg: ALG, typ: "kb+jwt" },
+    { iat: Math.floor(Date.now() / 1000), nonce, aud: audience, sd_hash: sdHash },
+  );
 
   return presentationHead + kbJwt;
 }
