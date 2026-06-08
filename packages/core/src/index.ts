@@ -4,3 +4,4 @@ export * from "./crypto.js";
 export * from "./sd-jwt.js";
 export * from "./status-list.js";
 export * from "./trust.js";
+export * from "./mdoc.js";
