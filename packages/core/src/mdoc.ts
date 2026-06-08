@@ -18,6 +18,7 @@ import { Encoder, Tag } from "cbor-x";
 import { importJWK, type JWK } from "jose";
 import { createHash, sign as nodeSign, verify as nodeVerify, randomBytes, type KeyObject } from "node:crypto";
 import { Oid4vcError } from "./errors.js";
+import { asSigner, type JwsSigner } from "./keystore.js";
 
 // Deterministic-ish CBOR: integer map keys preserved (Maps, not objects), no record tables.
 const cbor = new Encoder({ mapsAsObjects: false, useRecords: false, tagUint8Array: false });
@@ -58,6 +59,15 @@ async function coseSign1(privateJwk: JWK, payload: Buffer): Promise<[Buffer, Map
   const key = (await importJWK(privateJwk, "ES256")) as KeyObject;
   const signature = nodeSign("sha256", sigStructure(payload), { key, dsaEncoding: "ieee-p1363" });
   // COSE_Sign1 = [ protected (bstr), unprotected (map), payload (bstr), signature (bstr) ]
+  return [ALG_ES256_HDR, new Map(), payload, signature];
+}
+
+/** COSE_Sign1 where the raw r||s signature comes from a keystore signer (WSCD boundary). */
+async function coseSign1Raw(
+  signRaw: (d: Uint8Array) => Promise<Uint8Array>,
+  payload: Buffer,
+): Promise<[Buffer, Map<number, unknown>, Buffer, Buffer]> {
+  const signature = Buffer.from(await signRaw(sigStructure(payload)));
   return [ALG_ES256_HDR, new Map(), payload, signature];
 }
 
@@ -138,11 +148,12 @@ export async function issueMdoc(issuerPrivateJwk: JWK, holderPublicJwk: JWK, cre
  */
 export async function createMdocPresentation(
   issued: IssuedMdoc,
-  holderPrivateJwk: JWK,
+  holder: JWK | JwsSigner,
   reveal: Record<string, string[]>,
   audience: string,
   nonce: string,
 ): Promise<string> {
+  const signer = asSigner(holder);
   const issuerSigned = dec(Buffer.from(issued.issuerSigned, "base64url")) as Map<string, unknown>;
   const allNs = issuerSigned.get("nameSpaces") as Map<string, Tag[]>;
 
@@ -166,7 +177,7 @@ export async function createMdocPresentation(
   // SessionTranscript is simplified here to bind audience + nonce.
   const sessionTranscript = new Map<string, string>([["aud", audience], ["nonce", nonce]]);
   const deviceAuthBytes = enc(["DeviceAuthentication", sessionTranscript, issued.docType, tag24(enc(new Map()))]);
-  const deviceAuth = await coseSign1(holderPrivateJwk, deviceAuthBytes);
+  const deviceAuth = await coseSign1Raw((d) => signer.signRaw(d), deviceAuthBytes);
 
   const document = new Map<string, unknown>([
     ["docType", issued.docType],

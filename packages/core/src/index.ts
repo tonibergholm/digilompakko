@@ -5,3 +5,6 @@ export * from "./sd-jwt.js";
 export * from "./status-list.js";
 export * from "./trust.js";
 export * from "./mdoc.js";
+export * from "./keystore.js";
+export * from "./pkce.js";
+export * from "./rp-registry.js";

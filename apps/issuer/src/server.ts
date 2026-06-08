@@ -22,6 +22,7 @@ import {
   STATUS_INVALID,
   Oid4vcError,
   sendError,
+  verifyPkce,
   ALG,
   type CredentialClaims,
 } from "@digilompakko/core";
@@ -45,8 +46,12 @@ const issuedRecords: IssuedRecord[] = [];
 
 // --- In-memory issuance stores ---
 interface Pending { claims: CredentialClaims; cNonce?: string; accessToken?: string }
-const offers = new Map<string, Pending>();
-const tokens = new Map<string, string>();
+const offers = new Map<string, Pending>();             // pre-authorized_code -> pending
+const accessTokens = new Map<string, Pending>();        // access_token -> pending
+// Authorization Code flow (RFC 9126 PAR + RFC 7636 PKCE):
+interface ParRequest { clientId: string; codeChallenge: string; scope?: string }
+const parRequests = new Map<string, ParRequest>();      // request_uri -> PAR
+const authCodes = new Map<string, { codeChallenge: string; pending: Pending }>(); // code -> ...
 
 const DEMO_PID: CredentialClaims = {
   vct: PID_CONFIG_ID,
@@ -67,6 +72,8 @@ app.get("/.well-known/openid-credential-issuer", (_req, res) => {
     credential_issuer: ISSUER_URL,
     credential_endpoint: `${ISSUER_URL}/credential`,
     token_endpoint: `${ISSUER_URL}/token`,
+    authorization_endpoint: `${ISSUER_URL}/authorize`,
+    pushed_authorization_request_endpoint: `${ISSUER_URL}/par`,
     status_list_endpoint: STATUS_URI,
     jwks: { keys: [issuerKeys.publicJwk] },
     credential_configurations_supported: {
@@ -102,17 +109,63 @@ app.post("/offer", (_req, res) => {
   });
 });
 
-// 3) Token endpoint
+// 3a) Pushed Authorization Request (RFC 9126) — start of the Authorization Code flow.
+app.post("/par", (req, res) => {
+  try {
+    const { client_id, code_challenge, code_challenge_method, scope } = req.body ?? {};
+    if (!client_id) throw new Oid4vcError("invalid_request", "missing client_id");
+    if (code_challenge_method !== "S256") throw new Oid4vcError("invalid_request", "code_challenge_method must be S256");
+    if (!code_challenge) throw new Oid4vcError("invalid_request", "missing code_challenge");
+    const requestUri = `urn:ietf:params:oauth:request_uri:${randomUUID()}`;
+    parRequests.set(requestUri, { clientId: client_id, codeChallenge: code_challenge, scope });
+    res.json({ request_uri: requestUri, expires_in: 90 });
+  } catch (e) {
+    sendError(res, e);
+  }
+});
+
+// 3b) Authorization endpoint. A real issuer authenticates the user here (eID); the demo
+// auto-approves and returns an authorization code bound to the PAR's PKCE challenge.
+app.get("/authorize", (req, res) => {
+  try {
+    const requestUri = String(req.query.request_uri ?? "");
+    const par = parRequests.get(requestUri);
+    if (!par) throw new Oid4vcError("invalid_request", "unknown or expired request_uri");
+    const code = randomUUID();
+    authCodes.set(code, { codeChallenge: par.codeChallenge, pending: { claims: structuredClone(DEMO_PID) } });
+    parRequests.delete(requestUri);
+    // A real flow redirects to the wallet's redirect_uri with ?code=…; the demo returns JSON.
+    res.json({ code });
+  } catch (e) {
+    sendError(res, e);
+  }
+});
+
+// 3c) Token endpoint — supports both pre-authorized_code and authorization_code (PKCE) grants.
 app.post("/token", (req, res) => {
   try {
-    const code = req.body?.["pre-authorized_code"];
-    const pending = code && offers.get(code);
-    if (!pending) throw new Oid4vcError("invalid_grant", "unknown or used pre-authorized_code");
+    const grant = req.body?.grant_type;
+    let pending: Pending | undefined;
+
+    if (grant === "authorization_code") {
+      const code = req.body?.code;
+      const entry = code ? authCodes.get(code) : undefined;
+      if (!entry) throw new Oid4vcError("invalid_grant", "unknown authorization code");
+      verifyPkce(req.body?.code_verifier, entry.codeChallenge); // throws on mismatch
+      authCodes.delete(code);
+      pending = entry.pending;
+    } else {
+      const code = req.body?.["pre-authorized_code"];
+      pending = code ? offers.get(code) : undefined;
+      if (!pending) throw new Oid4vcError("invalid_grant", "unknown or used pre-authorized_code");
+      offers.delete(code);
+    }
+
     const accessToken = randomUUID();
     const cNonce = randomUUID();
     pending.accessToken = accessToken;
     pending.cNonce = cNonce;
-    tokens.set(accessToken, code);
+    accessTokens.set(accessToken, pending);
     res.json({ access_token: accessToken, token_type: "bearer", expires_in: 300, c_nonce: cNonce });
   } catch (e) {
     sendError(res, e);
@@ -123,8 +176,7 @@ app.post("/token", (req, res) => {
 app.post("/credential", async (req, res) => {
   try {
     const accessToken = (req.header("authorization") ?? "").replace(/^Bearer\s+/i, "");
-    const code = tokens.get(accessToken);
-    const pending = code ? offers.get(code) : undefined;
+    const pending = accessTokens.get(accessToken);
     if (!pending) throw new Oid4vcError("invalid_token", "unknown access token", 401);
 
     const proofJwt: string | undefined = req.body?.proof?.jwt;
@@ -154,8 +206,7 @@ app.post("/credential", async (req, res) => {
 
     const issued = await issueSdJwtVc(issuerKeys.privateJwk, ISSUER_URL, holderJwk, pending.claims);
 
-    offers.delete(code!);
-    tokens.delete(accessToken);
+    accessTokens.delete(accessToken);
     res.json({ credential: issued.sdJwt, format: "dc+sd-jwt", status_index: idx });
   } catch (e) {
     sendError(res, e);

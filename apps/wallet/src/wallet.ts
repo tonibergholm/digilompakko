@@ -1,56 +1,84 @@
 /**
- * Wallet (holder) logic, framework-agnostic so it can be reused by the HTTP layer,
- * a CLI, or tests. Keys + credentials are in-memory for the demo (see COMPLIANCE.md §6).
+ * Wallet (holder) logic, framework-agnostic so it can be reused by the HTTP layer, a CLI, or tests.
+ *
+ * Keys live in a `SoftwareKeyStore` (the WSCD boundary abstraction) — the wallet never handles
+ * raw private key material, it asks the keystore to sign. Credentials are in-memory for the demo.
  */
-import { SignJWT, importJWK } from "jose";
 import {
-  generateP256KeyPair,
+  SoftwareKeyStore,
   createPresentation,
   peekPayload,
+  pkceS256Challenge,
   ALG,
-  type KeyPair,
+  type JWK,
   type CredentialOffer,
   type PresentationRequest,
 } from "@digilompakko/core";
+import { randomUUID } from "node:crypto";
 
 export interface StoredCredential {
   sdJwt: string;
   vct: string;
-  claims: Record<string, unknown>; // disclosable claim names (for UI/consent)
 }
 
 export class Wallet {
-  private holderKeys!: KeyPair;
+  private keyStore = new SoftwareKeyStore();
+  private keyId!: string;
+  private publicJwk!: JWK;
   readonly credentials: StoredCredential[] = [];
 
   async init(): Promise<void> {
-    this.holderKeys = await generateP256KeyPair();
+    const { keyId, publicJwk } = await this.keyStore.generateKey();
+    this.keyId = keyId;
+    this.publicJwk = publicJwk;
   }
 
-  /** OpenID4VCI: redeem a Credential Offer and store the resulting SD-JWT VC. */
+  /** OpenID4VCI pre-authorized code flow. */
   async acceptOffer(offer: CredentialOffer): Promise<StoredCredential> {
     const issuer = offer.credential_issuer;
     const preAuth = offer.grants["urn:ietf:params:oauth:grant-type:pre-authorized_code"]["pre-authorized_code"];
+    const token = (await this.postJson(`${issuer}/token`, {
+      grant_type: "urn:ietf:params:oauth:grant-type:pre-authorized_code",
+      "pre-authorized_code": preAuth,
+    })) as TokenResponse;
+    return this.fetchCredential(issuer, token);
+  }
 
-    // 1. Token endpoint -> access token + c_nonce.
-    const tokenRes = await fetch(`${issuer}/token`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        grant_type: "urn:ietf:params:oauth:grant-type:pre-authorized_code",
-        "pre-authorized_code": preAuth,
-      }),
-    });
-    const token = (await tokenRes.json()) as { access_token: string; c_nonce: string };
+  /**
+   * OpenID4VCI Authorization Code flow with PAR (RFC 9126) + PKCE (RFC 7636).
+   * Demonstrates the higher-assurance issuance path the ARF expects for PID.
+   */
+  async acceptViaAuthCode(issuer: string, clientId = "digilompakko-wallet"): Promise<StoredCredential> {
+    const codeVerifier = randomUUID() + randomUUID();
+    const codeChallenge = pkceS256Challenge(codeVerifier);
 
-    // 2. Build a Proof-of-Possession JWT bound to c_nonce + issuer audience.
-    const key = await importJWK(this.holderKeys.privateJwk, ALG);
-    const proofJwt = await new SignJWT({ nonce: token.c_nonce, aud: issuer })
-      .setProtectedHeader({ alg: ALG, typ: "openid4vci-proof+jwt", jwk: this.holderKeys.publicJwk })
-      .setIssuedAt()
-      .sign(key);
+    const par = (await this.postJson(`${issuer}/par`, {
+      client_id: clientId,
+      code_challenge: codeChallenge,
+      code_challenge_method: "S256",
+      scope: "pid",
+    })) as { request_uri: string };
 
-    // 3. Credential endpoint -> SD-JWT VC.
+    const auth = (await (await fetch(`${issuer}/authorize?request_uri=${encodeURIComponent(par.request_uri)}`)).json()) as { code: string };
+
+    const token = (await this.postJson(`${issuer}/token`, {
+      grant_type: "authorization_code",
+      code: auth.code,
+      code_verifier: codeVerifier,
+      client_id: clientId,
+    })) as TokenResponse;
+
+    return this.fetchCredential(issuer, token);
+  }
+
+  /** Shared: build the holder Proof-of-Possession and call the credential endpoint. */
+  private async fetchCredential(issuer: string, token: TokenResponse): Promise<StoredCredential> {
+    const signer = this.keyStore.getSigner(this.keyId);
+    const proofJwt = await signer.signJwt(
+      { alg: ALG, typ: "openid4vci-proof+jwt", jwk: this.publicJwk },
+      { iat: Math.floor(Date.now() / 1000), nonce: token.c_nonce, aud: issuer },
+    );
+
     const credRes = await fetch(`${issuer}/credential`, {
       method: "POST",
       headers: { "content-type": "application/json", authorization: `Bearer ${token.access_token}` },
@@ -59,32 +87,25 @@ export class Wallet {
     const { credential } = (await credRes.json()) as { credential?: string };
     if (!credential) throw new Error("issuer returned no credential");
 
-    const payload = peekPayload(credential);
-    const stored: StoredCredential = {
-      sdJwt: credential,
-      vct: payload.vct as string,
-      claims: this.disclosableNames(credential),
-    };
+    const stored: StoredCredential = { sdJwt: credential, vct: peekPayload(credential).vct as string };
     this.credentials.push(stored);
     return stored;
   }
 
-  /** OpenID4VP: fetch the request, build a presentation, post the vp_token. */
+  /** OpenID4VP: fetch the request, build a presentation (signed via the keystore), post the vp_token. */
   async present(requestUri: string, revealOverride?: string[]): Promise<{ requestId: string; result: unknown }> {
-    const reqRes = await fetch(requestUri);
-    const request = (await reqRes.json()) as PresentationRequest;
+    const request = (await (await fetch(requestUri)).json()) as PresentationRequest;
 
     const wanted = request.dcql_query.credentials[0];
     const cred = this.credentials.find((c) => wanted.meta.vct_values.includes(c.vct));
     if (!cred) throw new Error(`no stored credential matches ${wanted.meta.vct_values.join(",")}`);
 
-    // The verifier requests these claims; the user could narrow further (consent).
     const requested = wanted.claims.map((c) => c.path[0]);
     const toReveal = revealOverride ?? requested;
 
     const presentation = await createPresentation(
       cred.sdJwt,
-      this.holderKeys.privateJwk,
+      this.keyStore.getSigner(this.keyId), // signs inside the keystore (WSCD)
       toReveal,
       request.client_id,
       request.nonce,
@@ -101,14 +122,21 @@ export class Wallet {
     return { requestId, result };
   }
 
-  /** Reads disclosable claim *names* (values stay hidden until presentation). */
-  private disclosableNames(_compact: string): Record<string, unknown> {
-    // For the demo we expose the names we know the PID carries; a fuller impl would
-    // parse the disclosures stored alongside the SD-JWT.
-    return {};
+  private async postJson(url: string, body: unknown): Promise<unknown> {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    return res.json();
   }
 
-  get holderPublicJwk() {
-    return this.holderKeys.publicJwk;
+  get holderPublicJwk(): JWK {
+    return this.publicJwk;
   }
+}
+
+interface TokenResponse {
+  access_token: string;
+  c_nonce: string;
 }

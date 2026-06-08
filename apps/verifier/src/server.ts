@@ -18,6 +18,7 @@ import {
   peekPayload,
   readStatus,
   StaticTrustResolver,
+  RelyingPartyRegistry,
   STATUS_INVALID,
   Oid4vcError,
   sendError,
@@ -34,6 +35,13 @@ app.use(express.json());
 
 const trust = new StaticTrustResolver(TRUSTED);
 
+// This verifier registers itself as a Relying Party, declaring exactly which attributes it is
+// entitled to request. The registry gate (assertEntitled) enforces data minimisation: the RP
+// cannot ask for more than it registered for. A wallet could resolve /rp/:clientId to verify this.
+const REQUESTED_ATTRS = ["given_name", "family_name", "age_over_18"];
+const rpRegistry = new RelyingPartyRegistry();
+rpRegistry.register({ client_id: VERIFIER_URL, name: "Digilompakko Demo Relying Party", entitled_attributes: REQUESTED_ATTRS });
+
 const DCQL: DcqlQuery = {
   credentials: [
     {
@@ -48,11 +56,24 @@ const DCQL: DcqlQuery = {
 interface Session { nonce: string; result?: unknown }
 const sessions = new Map<string, Session>();
 
+// RP registration lookup (a wallet can check the verifier is a registered RP).
+app.get("/rp/:clientId", (req, res) => {
+  const rp = rpRegistry.get(decodeURIComponent(req.params.clientId));
+  if (!rp) return res.status(404).json({ error: "not_registered" });
+  res.json(rp);
+});
+
 app.post("/presentation/request", (_req, res) => {
-  const id = randomUUID();
-  const nonce = randomUUID();
-  sessions.set(id, { nonce });
-  res.json({ request_id: id, request_uri: `${VERIFIER_URL}/presentation/request/${id}` });
+  try {
+    // Data-minimisation gate: refuse to build a request for attributes we are not entitled to.
+    rpRegistry.assertEntitled(VERIFIER_URL, REQUESTED_ATTRS);
+    const id = randomUUID();
+    const nonce = randomUUID();
+    sessions.set(id, { nonce });
+    res.json({ request_id: id, request_uri: `${VERIFIER_URL}/presentation/request/${id}` });
+  } catch (e) {
+    sendError(res, e);
+  }
 });
 
 app.get("/presentation/request/:id", (req, res) => {

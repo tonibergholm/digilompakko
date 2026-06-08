@@ -125,6 +125,9 @@ holder binding, replay protection, and minimal disclosure.
 | Credential expiry enforcement | `core/src/sd-jwt.ts` (`exp`) | ✅ demo |
 | ISO 18013-5 mdoc / mDL (`mso_mdoc`, CBOR/COSE_Sign1) | `core/src/mdoc.ts`; issuer advertises `mso_mdoc` | ✅ demo (subset) |
 | mdoc device binding (deviceAuth over nonce) | `core/src/mdoc.ts` | ✅ demo |
+| WSCD key-storage boundary (keys never exported) | `core/src/keystore.ts` (`WalletKeyStore`, `JwsSigner`) | ✅ demo (software) |
+| Authorization Code + PAR + PKCE issuance | issuer `/par`, `/authorize`, `/token`; `core/src/pkce.ts` | ✅ demo |
+| Relying Party registration + entitlement gate | `core/src/rp-registry.ts`; verifier `/rp/:id` | ✅ demo |
 | Real Trusted Lists / Registrar | `TrustResolver` interface ready; static for now | 🟡 interface only |
 | WSCD / secure element key storage | — | ⬜ roadmap (keys in software for demo) |
 
@@ -134,7 +137,10 @@ holder binding, replay protection, and minimal disclosure.
 
 A production EUDI wallet additionally requires, and this demo deliberately does **not** yet provide:
 
-1. **Certified secure key storage** (WSCD — secure element / TEE / HSM). Demo keys are in software.
+1. **Certified secure key storage** (WSCD — secure element / TEE / HSM). The key-storage *boundary*
+   is abstracted (`core/src/keystore.ts`: keys never leave the store, signing happens inside it),
+   but the demo's `SoftwareKeyStore` holds keys in memory. A hardware-backed implementation plugs
+   in behind the same `WalletKeyStore` interface.
 2. **Real PID issuance** tied to a national eID and the Population Information System (DVV's domain).
 3. **Trust infrastructure**: Trusted Lists, the EU Registrar, Relying Party registration & access certs.
 4. **Revocation** (Token Status List) and key/credential lifecycle management.

@@ -29,7 +29,9 @@ Compliance is a *stack*, not one document. This repo implements the core of it a
 | Trust resolution | pluggable resolver + static trusted list | ✅ |
 | mdoc / ISO 18013-5, real trusted lists, secure element | — | ⬜ roadmap |
 
-Full mapping with requirement traceability: **[`docs/COMPLIANCE.md`](docs/COMPLIANCE.md)**.
+Full mapping with requirement traceability: **[`docs/COMPLIANCE.md`](docs/COMPLIANCE.md)**,
+**[`docs/TRACEABILITY.md`](docs/TRACEABILITY.md)** (capability → code → test), and
+**[`docs/CONFORMANCE.md`](docs/CONFORMANCE.md)** (how to run the external conformance suites).
 
 ## Architecture
 
