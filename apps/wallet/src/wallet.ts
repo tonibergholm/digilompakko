@@ -12,6 +12,7 @@ import {
   verifyPresentationRequest,
   peekPayload,
   pkceS256Challenge,
+  safeFetch,
   Oid4vcError,
   ALG,
   type JWK,
@@ -178,8 +179,8 @@ export class Wallet {
       throw new Oid4vcError("access_denied", `untrusted verifier origin: ${clientId}`, 403);
     }
 
-    // Fetch JWKS from the trusted origin (safe — the URL comes from our config, not the JWT).
-    const jwks = (await (await fetch(`${trustedOrigin}/jwks.json`)).json()) as { keys: JWK[] };
+    // Fetch JWKS from the trusted origin (safe URL — derived from our config, not the JWT).
+    const jwks = (await (await safeFetch(`${trustedOrigin}/jwks.json`)).json()) as { keys: JWK[] };
     if (!jwks.keys?.length) throw new Oid4vcError("invalid_request", "verifier JWKS is empty");
     const trustedRps = new Map<string, JWK>([[clientId, jwks.keys[0]]]);
 
@@ -218,7 +219,7 @@ export class Wallet {
   }
 
   private async postJson(url: string, body: unknown): Promise<unknown> {
-    const res = await fetch(url, {
+    const res = await safeFetch(url, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),

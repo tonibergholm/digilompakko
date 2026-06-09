@@ -21,6 +21,7 @@ import {
   peekPayload,
   readStatus,
   signRequestObject,
+  safeFetchText,
   StaticTrustResolver,
   RelyingPartyRegistry,
   STATUS_INVALID,
@@ -175,7 +176,7 @@ app.post("/presentation/response", async (req, res) => {
       const mResult = await verifyMdocPresentation(vpToken, issuerKey, VERIFIER_URL, session.nonce);
       // Revocation: if the MSO carries a status reference, check the Token Status List.
       if (mResult.valid && mResult.status) {
-        const token = await fetch(mResult.status.uri).then((r) => r.text());
+        const token = await safeFetchText(mResult.status.uri);
         const status = await readStatus(token, mResult.status.idx, issuerKey);
         if (status === STATUS_INVALID) {
           mResult.valid = false;
@@ -206,7 +207,7 @@ app.post("/presentation/response", async (req, res) => {
     if (result.valid) {
       const statusRef = (result.issuerClaims.status as { status_list?: { idx: number; uri: string } } | undefined)?.status_list;
       if (statusRef) {
-        const token = await fetch(statusRef.uri).then((r) => r.text());
+        const token = await safeFetchText(statusRef.uri);
         const status = await readStatus(token, statusRef.idx, issuerKey);
         if (status === STATUS_INVALID) {
           result.valid = false;

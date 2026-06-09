@@ -8,6 +8,7 @@
  */
 import type { JWK } from "jose";
 import { Oid4vcError } from "./errors.js";
+import { safeFetchJson } from "./http.js";
 
 export interface TrustResolver {
   /** Return the issuer's signing key if the issuer is trusted; throw otherwise. */
@@ -32,8 +33,7 @@ export class StaticTrustResolver implements TrustResolver {
 
     let key: JWK | undefined;
     try {
-      const res = await fetch(`${issuer}/.well-known/openid-credential-issuer`);
-      const meta = (await res.json()) as { jwks?: { keys?: JWK[] } };
+      const meta = await safeFetchJson<{ jwks?: { keys?: JWK[] } }>(`${issuer}/.well-known/openid-credential-issuer`);
       key = meta?.jwks?.keys?.[0];
     } catch (e) {
       throw new Oid4vcError("untrusted_issuer", `cannot fetch issuer metadata: ${(e as Error).message}`, 502);
