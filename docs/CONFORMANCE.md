@@ -30,7 +30,8 @@ How to point it at this repo:
 4. As a **wallet** test: drive `apps/wallet` against the suite's reference issuer/verifier.
 
 Known gaps to expect failures on (documented, not silent): full 18013-5 SessionTranscript,
-`deviceMac`, request-object signing/encryption, and any HAIP feature on the roadmap.
+`deviceMac`, request-object **encryption** and response encryption (signed request objects *are*
+implemented), and any HAIP feature on the roadmap.
 
 ## 2. EU Launchpad / interoperability events
 

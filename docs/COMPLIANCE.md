@@ -25,13 +25,16 @@ no single "the spec" — compliance is a *stack*:
 | Credential format A | **IETF SD-JWT VC** (`dc+sd-jwt`) | Selective-disclosure JSON credential format. **Primary format in this demo.** |
 | Credential format B | **ISO/IEC 18013-5 mdoc / mDL** (`mso_mdoc`) | Binary CBOR/COSE format, esp. mobile driving licence. **Implemented (subset).** |
 | Query | **DCQL** (Digital Credentials Query Language) | How a verifier expresses *what* it wants. |
-| Status | **IETF Token Status List** | Credential revocation/suspension. *Roadmap.* |
+| Status | **IETF Token Status List** | Credential revocation/suspension. **Implemented (SD-JWT VC + mdoc).** |
+| Request auth | **JAR (RFC 9101)** | Signed OpenID4VP request objects. **Implemented.** |
 | Crypto | **ES256 / P-256** mandated by HAIP | Signing + holder key binding. |
 
-> **Scope of this repo:** a faithful, readable **end-to-end demo** of the SD-JWT VC happy path
-> (issue → store → present → verify) over OpenID4VCI/VP with HAIP crypto. It is a learning and
-> conformance-testing reference, **not** a certified production wallet. See §6 for the gap to
-> certification.
+> **Scope of this repo:** a faithful, readable **end-to-end demo** of issue → store → present →
+> verify over OpenID4VCI/VP with HAIP crypto, for **both** credential formats (SD-JWT VC and ISO
+> 18013-5 mdoc/mDL), including selective disclosure, holder/device binding, Token Status List
+> revocation, a WSCD key-storage boundary, Authorization Code + PAR + PKCE issuance, RP registration,
+> and signed request objects. It is a learning and conformance-testing reference, **not** a certified
+> production wallet. See §6 for the gap to certification.
 
 ---
 
@@ -63,9 +66,10 @@ The ARF defines a set of ecosystem roles. This demo implements the three that cl
 | Relying Party | **Verifier** service (OpenID4VP) | `apps/verifier` |
 | Shared crypto, SD-JWT VC, trust utils | **Core** library | `packages/core` |
 
-Out of scope for v0 (documented in `ROADMAP.md`): Wallet Provider backend, PID issuance with
-real eID, Trusted Lists / Registrar, Relying Party registration, mdoc/ISO 18013-5, proximity
-flows (BLE/NFC), revocation.
+Out of scope (documented in `ROADMAP.md`): Wallet Provider backend, PID issuance with a real eID,
+real Trusted Lists / Registrar and RP access certificates, hardware-backed WSCD, and proximity
+flows (BLE/NFC, ISO 18013-7). The verifier also handles the **mdoc** format and signs its requests
+(JAR); both are exercised end-to-end.
 
 ---
 
@@ -102,7 +106,8 @@ holder binding, replay protection, and minimal disclosure.
   an interoperable, readable demo. The EU *reference* implementations are Kotlin/Swift/Python; this
   repo is a complementary, approachable TS reference. (Stack is swappable per component.)
 - **`jose`** for all JWS/JWT signing & verification — audited, standards-correct, no hand-rolled crypto.
-- **SD-JWT VC first.** HAIP requires SD-JWT VC support of all parties; mdoc is added later.
+- **SD-JWT VC first, mdoc alongside.** HAIP requires SD-JWT VC support of all parties; the ISO
+  18013-5 mdoc/mDL format is implemented too and exercised end-to-end.
 - **ES256 / P-256 everywhere**, per HAIP §"Cryptographic Suites".
 - **Express** services with OpenAPI-style routes mirroring the spec endpoints, so each HTTP route maps
   1:1 to a clause you can cite.
@@ -115,8 +120,8 @@ holder binding, replay protection, and minimal disclosure.
 |-------------|----------------|--------|
 | SD-JWT VC issuance (`dc+sd-jwt`) | `packages/core/src/sd-jwt.ts` `issueSdJwtVc()` | ✅ demo |
 | Selective disclosure (salted-hash digests) | `packages/core/src/sd-jwt.ts` | ✅ demo |
-| Holder binding via `cnf` + KB-JWT | `core` `createKbJwt()` / `verifyPresentation()` | ✅ demo |
-| OpenID4VCI metadata + offer + token + credential | `apps/issuer` | ✅ demo (pre-auth flow) |
+| Holder binding via `cnf` + KB-JWT | `core` `createPresentation()` / `verifyPresentation()` | ✅ demo |
+| OpenID4VCI metadata + offer + token + credential | `apps/issuer` | ✅ demo (pre-auth + Auth Code/PAR/PKCE) |
 | OpenID4VP request with DCQL + nonce/aud + replay protection | `apps/verifier` | ✅ demo |
 | ES256 / P-256 only | `packages/core/src/crypto.ts` | ✅ enforced |
 | Token Status List revocation (`statuslist+jwt`) | `core/src/status-list.ts`, issuer `/statuslist` + `/admin/revoke`, verifier check | ✅ demo |
@@ -131,7 +136,7 @@ holder binding, replay protection, and minimal disclosure.
 | Authorization Code + PAR + PKCE issuance | issuer `/par`, `/authorize`, `/token`; `core/src/pkce.ts` | ✅ demo |
 | Relying Party registration + entitlement gate | `core/src/rp-registry.ts`; verifier `/rp/:id` | ✅ demo |
 | Real Trusted Lists / Registrar | `TrustResolver` interface ready; static for now | 🟡 interface only |
-| WSCD / secure element key storage | — | ⬜ roadmap (keys in software for demo) |
+| Hardware-backed WSCD (secure element / TEE / HSM) | — | ⬜ roadmap (software keystore today) |
 
 ---
 
@@ -144,8 +149,10 @@ A production EUDI wallet additionally requires, and this demo deliberately does 
    but the demo's `SoftwareKeyStore` holds keys in memory. A hardware-backed implementation plugs
    in behind the same `WalletKeyStore` interface.
 2. **Real PID issuance** tied to a national eID and the Population Information System (DVV's domain).
-3. **Trust infrastructure**: Trusted Lists, the EU Registrar, Relying Party registration & access certs.
-4. **Revocation** (Token Status List) and key/credential lifecycle management.
+3. **Trust infrastructure**: real Trusted Lists, the EU Registrar, and RP **access certificates**
+   (RP registration itself is modelled in `core/src/rp-registry.ts`; the certs and lists are not).
+4. **Credential lifecycle** management — refresh / re-issuance (revocation via the Token Status List
+   is implemented for both SD-JWT VC and mdoc).
 5. **Proximity presentation** (BLE/NFC device retrieval, ISO 18013-7 for online). The `mso_mdoc`
    credential format itself is implemented (`core/src/mdoc.ts`), but as a **subset**: the
    SessionTranscript is simplified to bind audience+nonce (not the full 18013-5 device-engagement
