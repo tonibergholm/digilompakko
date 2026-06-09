@@ -61,8 +61,13 @@ object SecureKeyStore {
         val spec = KeyGenParameterSpec.Builder(ALIAS, KeyProperties.PURPOSE_SIGN)
             .setAlgorithmParameterSpec(ECGenParameterSpec("secp256r1"))
             .setDigests(KeyProperties.DIGEST_SHA256)
-            .setUserAuthenticationRequired(false)
-            .apply { if (strongBox) setIsStrongBoxBacked(true) }
+            // MEDIUM-4: require user authentication; 30-second window keeps demo usable
+            .setUserAuthenticationRequired(true)
+            .apply {
+                if (strongBox) setIsStrongBoxBacked(true)
+                @Suppress("DEPRECATION")
+                setUserAuthenticationValidityDurationSeconds(30)
+            }
             .build()
         KeyPairGenerator.getInstance(KeyProperties.KEY_ALGORITHM_EC, PROVIDER).run {
             initialize(spec)

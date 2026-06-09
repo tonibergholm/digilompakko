@@ -89,7 +89,8 @@ class WalletViewModel : ViewModel() {
                     val clientId = Jose.decodeUnverifiedPayload(jar).getString("client_id")
                     val jwks = Http.get("$clientId/jwks.json")
                     val key = JWK.from(jwks.getJSONArray("keys").getJSONObject(0))
-                    Jose.verifyJWS(jar, key)
+                    // MEDIUM-4: verify alg, typ, exp, aud in addition to ES256 signature (HAIP §4.1)
+                    Jose.verifyRequestObject(jar, key, "digilompakko-wallet")
                 } else raw
 
                 val clientId = request.getString("client_id")
