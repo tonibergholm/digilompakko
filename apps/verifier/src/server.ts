@@ -32,6 +32,10 @@ const PORT = Number(process.env.VERIFIER_PORT ?? 4002);
 const VERIFIER_URL = process.env.VERIFIER_URL ?? `http://localhost:${PORT}`;
 // Allow-list of trusted issuers (comma-separated env, or the local demo issuer by default).
 const TRUSTED = (process.env.TRUSTED_ISSUERS ?? "http://localhost:4001").split(",").map((s) => s.trim());
+// Wallet identifier that must appear in the `aud` claim of every signed request object (JAR).
+// Must match WALLET_AUDIENCE in the wallet's configuration — agreed out-of-band between the RP and
+// the wallet deployment. RFC 9101 §4 requires the JAR to include `aud` targeting the AS/wallet.
+const WALLET_AUDIENCE = process.env.WALLET_AUDIENCE ?? "digilompakko-wallet";
 
 const app = express();
 app.use(express.json());
@@ -111,6 +115,8 @@ app.get("/presentation/request/:id", async (req, res) => {
   if (!session) return res.status(404).json({ error: "unknown request" });
   const requestObject = {
     client_id: VERIFIER_URL,
+    // RFC 9101 §4: JAR MUST carry `aud` identifying the intended recipient (this wallet deployment).
+    aud: WALLET_AUDIENCE,
     nonce: session.nonce,
     response_type: "vp_token",
     response_mode: "direct_post",
@@ -119,6 +125,7 @@ app.get("/presentation/request/:id", async (req, res) => {
     dcql_query: session.format === "mso_mdoc" ? DCQL_MDL : DCQL,
   };
   // Signed request object (JAR): the wallet verifies our signature before responding.
+  // signRequestObject also adds a 120s `exp` — see packages/core/src/request-object.ts.
   const request = await signRequestObject(verifierKeys.privateJwk, requestObject);
   res.json({ request });
 });

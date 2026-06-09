@@ -10,8 +10,10 @@ import type { CredentialOffer } from "@digilompakko/core";
 const PORT = Number(process.env.WALLET_PORT ?? 4000);
 const ISSUER_URL = process.env.ISSUER_URL ?? "http://localhost:4001";
 const VERIFIER_URL = process.env.VERIFIER_URL ?? "http://localhost:4002";
+// Must match WALLET_AUDIENCE in the verifier — both read the same env var so the demo is zero-config.
+const WALLET_AUDIENCE = process.env.WALLET_AUDIENCE ?? "digilompakko-wallet";
 
-const wallet = new Wallet();
+const wallet = new Wallet({ trustedVerifierOrigins: [VERIFIER_URL], walletAudience: WALLET_AUDIENCE });
 await wallet.init();
 
 const app = express();

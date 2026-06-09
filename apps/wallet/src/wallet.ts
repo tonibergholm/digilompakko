@@ -9,9 +9,10 @@ import {
   SoftwareKeyStore,
   createPresentation,
   createMdocPresentation,
-  verifyRequestObject,
+  verifyPresentationRequest,
   peekPayload,
   pkceS256Challenge,
+  Oid4vcError,
   ALG,
   type JWK,
   type CredentialOffer,
@@ -19,6 +20,22 @@ import {
 import { randomUUID } from "node:crypto";
 
 const MDL_CONFIG_ID = "org.iso.18013.5.1.mDL";
+
+/**
+ * Wallet trust configuration.
+ *
+ * `trustedVerifierOrigins` is a pre-configured allowlist of verifier base URLs.  The wallet will
+ * ONLY fetch JWKS from — and accept JARs signed by — verifiers whose `client_id` starts with one
+ * of these origins.  This is the anchor that prevents an attacker from substituting an arbitrary
+ * key-fetch URL via a crafted `client_id` (HIGH-1 fix).
+ *
+ * `walletAudience` is this wallet's own identifier; it must appear in the `aud` claim of every
+ * signed request object (RFC 9101 §4).  Agreed out-of-band with each registered verifier.
+ */
+export interface WalletConfig {
+  trustedVerifierOrigins: string[];
+  walletAudience: string;
+}
 
 export interface StoredCredential {
   format: "dc+sd-jwt" | "mso_mdoc";
@@ -35,6 +52,14 @@ export class Wallet {
   private keyId!: string;
   private publicJwk!: JWK;
   readonly credentials: StoredCredential[] = [];
+  private readonly config: WalletConfig;
+
+  constructor(config?: WalletConfig) {
+    this.config = config ?? {
+      trustedVerifierOrigins: [(process.env.VERIFIER_URL ?? "http://localhost:4002")],
+      walletAudience: process.env.WALLET_AUDIENCE ?? "digilompakko-wallet",
+    };
+  }
 
   async init(): Promise<void> {
     const { keyId, publicJwk } = await this.keyStore.generateKey();
@@ -125,15 +150,42 @@ export class Wallet {
   }
 
   /**
-   * Fetch the verifier's request. If it's a signed request object (JAR), verify the RP's
-   * signature against its published JWKS before trusting any of its contents.
+   * Fetch the verifier's signed request object (JAR) and verify it fully before trusting anything.
+   *
+   * HIGH-1 fix — two properties enforced here:
+   *   a) Unsigned requests are rejected outright (no legacy bypass).  HAIP requires JAR.
+   *   b) The JWKS URL is derived from `trustedVerifierOrigins`, not from attacker-controlled claims.
+   *      We peek `client_id` only to look it up in our pre-configured trust list; if the origin
+   *      is not trusted we throw before making any network request to that origin.
+   *
+   * Verification of typ / exp / aud is delegated to verifyPresentationRequest in packages/core.
    */
   private async resolveRequest(requestUri: string): Promise<PresentationRequestObject> {
     const raw = (await (await fetch(requestUri)).json()) as { request?: string } & PresentationRequestObject;
-    if (!raw.request) return raw; // unsigned (legacy) — accept for backward compatibility
-    const clientId = peekPayload(raw.request).client_id as string;
-    const jwks = (await (await fetch(`${clientId}/jwks.json`)).json()) as { keys: JWK[] };
-    return (await verifyRequestObject(raw.request, jwks.keys[0])) as unknown as PresentationRequestObject;
+
+    // RFC 9101 §4 + HAIP: unsigned requests MUST be rejected — no legacy bypass.
+    if (!raw.request) {
+      throw new Oid4vcError("invalid_request", "unsigned presentation request rejected (JAR required by HAIP)");
+    }
+
+    // Peek client_id before any cryptographic trust is granted (payload not yet verified).
+    const clientId = peekPayload(raw.request).client_id as string | undefined;
+    if (!clientId) throw new Oid4vcError("invalid_request", "request object missing client_id");
+
+    // Trust gate: only proceed if the client_id origin is in our pre-configured allowlist.
+    const trustedOrigin = this.config.trustedVerifierOrigins.find((o) => clientId.startsWith(o));
+    if (!trustedOrigin) {
+      throw new Oid4vcError("access_denied", `untrusted verifier origin: ${clientId}`, 403);
+    }
+
+    // Fetch JWKS from the trusted origin (safe — the URL comes from our config, not the JWT).
+    const jwks = (await (await fetch(`${trustedOrigin}/jwks.json`)).json()) as { keys: JWK[] };
+    if (!jwks.keys?.length) throw new Oid4vcError("invalid_request", "verifier JWKS is empty");
+    const trustedRps = new Map<string, JWK>([[clientId, jwks.keys[0]]]);
+
+    return (await verifyPresentationRequest(raw.request, trustedRps, {
+      expectedAudience: this.config.walletAudience,
+    })) as unknown as PresentationRequestObject;
   }
 
   private async buildSdJwtPresentation(request: PresentationRequestObject, revealOverride?: string[]): Promise<string> {
