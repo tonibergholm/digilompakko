@@ -1,11 +1,25 @@
 # Digilompakko — Spec Compliance & Architecture Plan
 
-> An open-source, EUDI-compliant digital identity wallet demo (issuer + wallet + verifier),
-> aligned with the EU **Architecture and Reference Framework (ARF) 2.x** and the
-> **OpenID4VC High Assurance Interoperability Profile (HAIP) 1.0**.
+> An open-source, EUDI-**aligned** digital identity wallet **reference demo** (issuer + wallet +
+> verifier), built *toward* the EU **Architecture and Reference Framework (ARF) 2.x** and the
+> **OpenID4VC High Assurance Interoperability Profile (HAIP) 1.0 Final** (24 December 2025).
+> It is **not** an EUDI-compliant, certified, or HAIP-conformant wallet.
 
 This document maps the regulatory and technical requirements to a concrete architecture so
-that anyone can verify *why* each component exists and *which spec clause* it satisfies.
+that anyone can verify *why* each component exists and *which spec clause* it satisfies. Where
+this repo demonstrates a primitive but does **not** yet meet the spec's MUST-level bar, that is
+stated explicitly — see §5a (HAIP MUST-level matrix) and §6 (gap to certification).
+
+> ⚠️ **Security audit (2026-06-09).** An internal source-and-repository audit
+> ([`docs/SECURITY_AUDIT_2026-06-09.md`](./SECURITY_AUDIT_2026-06-09.md)) found this
+> implementation is **not HAIP 1.0 conformant** and must not be described as an EUDI wallet.
+> The highest-risk findings are: (HIGH-1) wallet verifier authentication is attacker-controlled
+> and unsigned requests are accepted; (HIGH-2) presentation sessions are replayable; (HIGH-3)
+> the verifier generates a DCQL query but does **not enforce it** against the presented
+> credential; (HIGH-4) mandatory HAIP controls (DPoP, wallet/key attestations, `x509_hash`
+> request authentication, encrypted `direct_post.jwt` responses, `trusted_authorities`) are
+> absent. Status markers in the tables below have been corrected to reflect this; do not read
+> a "✅ demo" marker as "spec-conformant".
 
 ---
 
@@ -19,7 +33,7 @@ no single "the spec" — compliance is a *stack*:
 |-------|---------------|----------------------|
 | Law | **eIDAS 2.0 — Reg. (EU) 2024/1183** + implementing acts | The legal mandate. Defines wallet, PID, attestations, trust model. |
 | Framework | **EU Architecture & Reference Framework (ARF) 2.x** | High-level architecture, roles, requirements catalogue (we cite requirement IDs). |
-| Interop profile | **OpenID4VC HAIP 1.0** | Pins the optional knobs of the OpenID4VC specs to one secure, interoperable subset. |
+| Interop profile | **OpenID4VC HAIP 1.0 Final** (24 Dec 2025) | Pins the optional knobs of the OpenID4VC specs to one secure, interoperable subset. This repo implements a **partial subset**; several MUST-level controls are absent (§5a). |
 | Issuance | **OpenID for Verifiable Credential Issuance (OpenID4VCI) 1.0** | How the issuer hands credentials to the wallet. |
 | Presentation | **OpenID for Verifiable Presentations (OpenID4VP) 1.0** | How a verifier requests and the wallet presents credentials. |
 | Credential format A | **IETF SD-JWT VC** (`dc+sd-jwt`) | Selective-disclosure JSON credential format. **Primary format in this demo.** |
@@ -121,8 +135,9 @@ holder binding, replay protection, and minimal disclosure.
 | SD-JWT VC issuance (`dc+sd-jwt`) | `packages/core/src/sd-jwt.ts` `issueSdJwtVc()` | ✅ demo |
 | Selective disclosure (salted-hash digests) | `packages/core/src/sd-jwt.ts` | ✅ demo |
 | Holder binding via `cnf` + KB-JWT | `core` `createPresentation()` / `verifyPresentation()` | ✅ demo |
-| OpenID4VCI metadata + offer + token + credential | `apps/issuer` | ✅ demo (pre-auth + Auth Code/PAR/PKCE) |
-| OpenID4VP request with DCQL + nonce/aud + replay protection | `apps/verifier` | ✅ demo |
+| OpenID4VCI metadata + offer + token + credential | `apps/issuer` | 🟡 demo (pre-auth + Auth Code/PAR/PKCE; advertised token/PAR/code expiry **not yet enforced** — audit MEDIUM-2) |
+| OpenID4VP request with DCQL + nonce/aud | `apps/verifier` | 🟡 demo — request is built, but the DCQL query is **not enforced** against the response (audit HIGH-3) and sessions are **replayable** (audit HIGH-2) |
+| Verifier (RP) authentication in the wallet | `apps/wallet` | 🔴 **not safe** — `client_id`/JWKS are attacker-controlled and unsigned requests are accepted (audit HIGH-1) |
 | ES256 / P-256 only | `packages/core/src/crypto.ts` | ✅ enforced |
 | Token Status List revocation (`statuslist+jwt`) | `core/src/status-list.ts`, issuer `/statuslist` + `/admin/revoke`, verifier check | ✅ demo |
 | Pluggable trust resolution (allow-list today) | `core/src/trust.ts` `StaticTrustResolver` | ✅ demo |
