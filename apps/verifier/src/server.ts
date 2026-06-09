@@ -17,6 +17,7 @@ import {
   generateP256KeyPair,
   verifyPresentation,
   verifyMdocPresentation,
+  checkDcqlSatisfied,
   peekPayload,
   readStatus,
   signRequestObject,
@@ -154,6 +155,14 @@ app.post("/presentation/response", async (req, res) => {
           mResult.errors.push("credential_revoked");
         }
       }
+      // DCQL §6.3: verify the response satisfies the query we sent.
+      if (mResult.valid) {
+        const missing = checkDcqlSatisfied(DCQL_MDL.credentials[0].claims, mResult.disclosedClaims);
+        if (missing.length) {
+          mResult.valid = false;
+          mResult.errors.push(`dcql_not_satisfied: missing ${missing.join(", ")}`);
+        }
+      }
       session.result = mResult;
       return res.json(mResult);
     }
@@ -176,6 +185,15 @@ app.post("/presentation/response", async (req, res) => {
           result.valid = false;
           result.errors.push("credential_revoked");
         }
+      }
+    }
+
+    // 4. DCQL §6.3: verify the response satisfies the query we sent.
+    if (result.valid) {
+      const missing = checkDcqlSatisfied(DCQL.credentials[0].claims, result.disclosedClaims);
+      if (missing.length) {
+        result.valid = false;
+        result.errors.push(`dcql_not_satisfied: missing ${missing.join(", ")}`);
       }
     }
 
