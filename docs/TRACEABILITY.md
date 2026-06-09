@@ -36,12 +36,12 @@ It is the artefact to hand an auditor or a contributor asking "where is requirem
 
 | Capability | Spec | Code | Tests | Status |
 |---|---|---|---|---|
-| Authorization Request + `direct_post` | OpenID4VP | `apps/verifier` `/presentation/request` | live | ✅ |
-| DCQL query | OpenID4VP §DCQL | `apps/verifier` `DCQL` | live | ✅ |
+| Authorization Request + `direct_post` | OpenID4VP | `apps/verifier` `/presentation/request` | live | 🟡 subset — plaintext `direct_post` only; HAIP requires encrypted `direct_post.jwt` (HIGH-4) |
+| DCQL query | OpenID4VP §DCQL | `apps/verifier` `DCQL` | live | 🟡 generated-not-enforced — query built but response not validated against it (HIGH-3) |
 | `vp_token` verification | OpenID4VP; HAIP | `core/src/sd-jwt.ts` `verifyPresentation` | `test/sd-jwt.test.ts` | ✅ |
-| Key Binding JWT (replay: nonce + aud) | IETF SD-JWT (KB-JWT) | `core/src/sd-jwt.ts`; `createPresentation` | `test/sd-jwt.test.ts` | ✅ |
+| Key Binding JWT (replay: nonce + aud) | IETF SD-JWT (KB-JWT) | `core/src/sd-jwt.ts`; `createPresentation` | `test/sd-jwt.test.ts` | 🟡 KB-JWT nonce checked, but session **not consumed** after successful use — replayable (HIGH-2) |
 | mdoc DeviceAuth (nonce-bound) | ISO/IEC 18013-5 | `core/src/mdoc.ts` | `test/mdoc.test.ts` | ✅ (subset) |
-| Signed request object (JAR) | RFC 9101; HAIP | `core/src/request-object.ts`; verifier `/jwks.json` | `test/extras.test.ts` | ✅ |
+| Signed request object (JAR) | RFC 9101; HAIP | `core/src/request-object.ts`; verifier `/jwks.json` | `test/extras.test.ts` | 🟡 JAR signed by verifier, but wallet does **not** verify verifier identity — `client_id`/JWKS are attacker-controlled (HIGH-1) |
 
 ## Trust, revocation & key management
 
@@ -69,6 +69,21 @@ It is the artefact to hand an auditor or a contributor asking "where is requirem
 |---|---|---|---|
 | ES256 / P-256 only | HAIP §Crypto Suites | `core/src/crypto.ts`, all signers | ✅ enforced |
 | No hand-rolled signature crypto | project policy | `jose` (JWS) + Node `crypto` (COSE raw) | ✅ |
+
+## HAIP 1.0 Final — MUST-level controls (absent)
+
+Controls mandated by HAIP 1.0 Final (24 Dec 2025) that are not yet implemented.
+See `docs/COMPLIANCE.md` §5a for detail.
+
+| HAIP MUST control | Status |
+|---|---|
+| FAPI 2.0 / DPoP sender-constrained access tokens | 🔴 absent |
+| Wallet client authentication at PAR/token endpoints | 🔴 absent |
+| Wallet attestation + key attestation | 🔴 absent |
+| `x509_hash` verifier authentication in signed requests | 🔴 absent |
+| Encrypted OpenID4VP responses (`direct_post.jwt`) | 🔴 absent |
+| Ephemeral response-encryption keys | 🔴 absent |
+| `trusted_authorities` DCQL support | 🔴 absent |
 
 ## Out of scope for a software reference (⛔)
 

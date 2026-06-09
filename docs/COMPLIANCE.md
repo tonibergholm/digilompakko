@@ -155,6 +155,28 @@ holder binding, replay protection, and minimal disclosure.
 
 ---
 
+## 5a. HAIP 1.0 Final — MUST-level controls matrix
+
+HAIP 1.0 Final (24 December 2025) mandates several controls that this demo does **not** implement.
+Until a full external conformance run passes, these must be listed as absent:
+
+| HAIP MUST-level control | Ref | Status | Notes |
+|---|---|---|---|
+| FAPI 2.0 sender-constrained access tokens (DPoP) | HAIP §8.2 | 🔴 absent | Bearer tokens used; DPoP not implemented |
+| Wallet client authentication at PAR/token endpoints | HAIP §8.3 | 🔴 absent | No `client_assertion` / attestation-based auth |
+| Wallet attestation (`wallet_attestation`) | HAIP §8.4 | 🔴 absent | Wallet identity is unverified |
+| Key attestation (WSCD binding) | HAIP §8.4 | 🔴 absent | Software key, no hardware attestation |
+| `x509_hash` verifier authentication in signed requests | HAIP §8.5 | 🔴 absent | Verifier JWKS self-published; `client_id` unverified (HIGH-1) |
+| Encrypted OpenID4VP response (`direct_post.jwt`) | HAIP §8.6 | 🔴 absent | Plaintext `direct_post` used instead |
+| Ephemeral response-encryption keys | HAIP §8.6 | 🔴 absent | No JARM encryption |
+| `trusted_authorities` in DCQL | HAIP §8.7 | 🔴 absent | DCQL does not include trusted-authority constraints |
+
+> After the HIGH-1, HIGH-2, and HIGH-3 code fixes are merged, the corresponding rows in §5 and
+> this table will be updated. The HAIP MUST-level controls above require additive engineering work
+> (DPoP, wallet/key attestations, encrypted responses) that is tracked in `ROADMAP.md`.
+
+---
+
 ## 6. Gap to real certification (be honest about this)
 
 A production EUDI wallet additionally requires, and this demo deliberately does **not** yet provide:
@@ -177,6 +199,18 @@ A production EUDI wallet additionally requires, and this demo deliberately does 
 
 The architecture is structured so each of these is an additive module, not a rewrite. See `ROADMAP.md`.
 
+**Correctness bugs (security findings — must be fixed before any production use):**
+
+7. **Verifier authentication absent (HIGH-1):** The wallet accepts unsigned presentation requests
+   and authenticates the verifier's JWKS from an attacker-controlled URL. This is a security bug,
+   not a roadmap item. Fix tracked in issue [#9](https://github.com/tonibergholm/digilompakko/issues/9) / branch `fix/verifier-auth`.
+8. **Session replay (HIGH-2):** Presentation sessions are not consumed after a successful
+   verification — the same captured `vp_token` can be re-submitted. Fix tracked in issue
+   [#10](https://github.com/tonibergholm/digilompakko/issues/10) / branch `fix/presentation-replay`.
+9. **DCQL not enforced (HIGH-3):** The verifier generates a DCQL query but accepts any valid
+   credential regardless of type, requested claims, or format semantics. Fix tracked in issue
+   [#11](https://github.com/tonibergholm/digilompakko/issues/11) / branch `fix/enforce-dcql`.
+
 ---
 
 ## 7. Licensing
@@ -190,7 +224,7 @@ EUPL-1.2 is a documented alternative if alignment with EU institutional licensin
 
 - eIDAS 2.0 — Regulation (EU) 2024/1183
 - EU ARF: https://eu-digital-identity-wallet.github.io/eudi-doc-architecture-and-reference-framework/
-- HAIP 1.0: https://openid.net/specs/openid4vc-high-assurance-interoperability-profile-1_0.html
+- HAIP 1.0 Final (24 Dec 2025): https://openid.net/specs/openid4vc-high-assurance-interoperability-profile-1_0-final.html
 - OpenID4VCI 1.0: https://openid.net/specs/openid-4-verifiable-credential-issuance-1_0.html
 - OpenID4VP 1.0: https://openid.net/specs/openid-4-verifiable-presentations-1_0.html
 - IETF SD-JWT VC: https://datatracker.ietf.org/doc/draft-ietf-oauth-sd-jwt-vc/
