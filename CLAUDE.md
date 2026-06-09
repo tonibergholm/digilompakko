@@ -16,13 +16,14 @@ It is a **reference/learning implementation, not a certified production wallet.*
 ## Repository map
 
 ```
-packages/core   Trust-critical library — crypto (ES256/P-256), SD-JWT VC issue/verify,
-                Key Binding JWT, Token Status List, trust resolver, error model. NO HTTP here.
-apps/issuer     OpenID4VCI 1.0 issuer (PID provider) + Status List endpoints   (port 4001)
-apps/verifier   OpenID4VP 1.0 verifier with trust + revocation checks          (port 4002)
-apps/wallet     Holder wallet + minimal web UI                                  (port 4000)
-scripts/demo.ts Headless end-to-end demo
-docs/           COMPLIANCE.md (spec traceability) · ARCHITECTURE.md · ROADMAP.md
+packages/core   Trust-critical library — crypto (ES256/P-256), SD-JWT VC, mdoc (CBOR/COSE),
+                Key Binding JWT, Token Status List, trust resolver, WSCD keystore, PKCE,
+                RP registry, signed request objects (JAR), error model. NO HTTP here.
+apps/issuer     OpenID4VCI 1.0 issuer — pre-auth + Auth Code/PAR/PKCE, Status List   (port 4001)
+apps/verifier   OpenID4VP 1.0 verifier — DCQL, trust, revocation, signed requests    (port 4002)
+apps/wallet     Holder wallet (both formats) + minimal web UI                        (port 4000)
+scripts/demo.ts Headless end-to-end demo (SD-JWT VC + mdoc)
+docs/           COMPLIANCE · ARCHITECTURE · ROADMAP · TRACEABILITY · CONFORMANCE · PRODUCTIONIZATION
 ```
 
 ## Commands

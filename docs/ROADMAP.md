@@ -2,7 +2,7 @@
 
 Status legend: ✅ done in demo · 🟡 partial · ⬜ planned
 
-## Phase 0 — End-to-end SD-JWT VC happy path (this release)
+## Phase 0 — End-to-end SD-JWT VC happy path (initial release)
 - ✅ Monorepo, shared `core` library, three services
 - ✅ P-256 key generation (ES256)
 - ✅ SD-JWT VC issuance with selective disclosure + holder binding (`cnf`)
