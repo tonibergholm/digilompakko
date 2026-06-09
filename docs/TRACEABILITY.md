@@ -37,11 +37,11 @@ It is the artefact to hand an auditor or a contributor asking "where is requirem
 | Capability | Spec | Code | Tests | Status |
 |---|---|---|---|---|
 | Authorization Request + `direct_post` | OpenID4VP | `apps/verifier` `/presentation/request` | live | 🟡 subset — plaintext `direct_post` only; HAIP requires encrypted `direct_post.jwt` (HIGH-4) |
-| DCQL query | OpenID4VP §DCQL | `apps/verifier` `DCQL` | live | 🟡 generated-not-enforced — query built but response not validated against it (HIGH-3) |
+| DCQL query | OpenID4VP §DCQL | `apps/verifier` `DCQL`; `core` `checkDcqlSatisfied` | `test/extras.test.ts` | ✅ enforced against response — format, `vct`/doctype, required claims validated (HIGH-3 fixed, PR [#23](https://github.com/tonibergholm/digilompakko/pull/23)) |
 | `vp_token` verification | OpenID4VP; HAIP | `core/src/sd-jwt.ts` `verifyPresentation` | `test/sd-jwt.test.ts` | ✅ |
-| Key Binding JWT (replay: nonce + aud) | IETF SD-JWT (KB-JWT) | `core/src/sd-jwt.ts`; `createPresentation` | `test/sd-jwt.test.ts` | 🟡 KB-JWT nonce checked, but session **not consumed** after successful use — replayable (HIGH-2) |
+| Key Binding JWT (replay: nonce + aud) | IETF SD-JWT (KB-JWT) | `core/src/sd-jwt.ts`; `createPresentation` | `test/sd-jwt.test.ts` | ✅ nonce + aud checked; session atomically consumed after use (HIGH-2 fixed, PR [#22](https://github.com/tonibergholm/digilompakko/pull/22)) |
 | mdoc DeviceAuth (nonce-bound) | ISO/IEC 18013-5 | `core/src/mdoc.ts` | `test/mdoc.test.ts` | ✅ (subset) |
-| Signed request object (JAR) | RFC 9101; HAIP | `core/src/request-object.ts`; verifier `/jwks.json` | `test/extras.test.ts` | 🟡 JAR signed by verifier, but wallet does **not** verify verifier identity — `client_id`/JWKS are attacker-controlled (HIGH-1) |
+| Signed request object (JAR) | RFC 9101; HAIP | `core/src/request-object.ts`; verifier `/jwks.json` | `test/extras.test.ts` | 🟡 JAR verified: signature + `alg`/`typ`/`exp`/`aud` (HIGH-1 fixed, PR [#21](https://github.com/tonibergholm/digilompakko/pull/21)); `x509_hash` binding absent (HAIP MUST — see §5a) |
 
 ## Trust, revocation & key management
 

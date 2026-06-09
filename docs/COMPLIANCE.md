@@ -10,16 +10,16 @@ that anyone can verify *why* each component exists and *which spec clause* it sa
 this repo demonstrates a primitive but does **not** yet meet the spec's MUST-level bar, that is
 stated explicitly — see §5a (HAIP MUST-level matrix) and §6 (gap to certification).
 
-> ⚠️ **Security audit (2026-06-09).** An internal source-and-repository audit
+> ⚠️ **Security audit (2026-06-09) — all code-level findings fixed.** An internal audit
 > ([`docs/SECURITY_AUDIT_2026-06-09.md`](./SECURITY_AUDIT_2026-06-09.md)) found this
 > implementation is **not HAIP 1.0 conformant** and must not be described as an EUDI wallet.
-> The highest-risk findings are: (HIGH-1) wallet verifier authentication is attacker-controlled
-> and unsigned requests are accepted; (HIGH-2) presentation sessions are replayable; (HIGH-3)
-> the verifier generates a DCQL query but does **not enforce it** against the presented
-> credential; (HIGH-4) mandatory HAIP controls (DPoP, wallet/key attestations, `x509_hash`
-> request authentication, encrypted `direct_post.jwt` responses, `trusted_authorities`) are
-> absent. Status markers in the tables below have been corrected to reflect this; do not read
-> a "✅ demo" marker as "spec-conformant".
+> All 11 code-level findings (HIGH-1..3, MEDIUM-1..5, LOW-1..2) have been fixed and merged
+> (PRs [#21](https://github.com/tonibergholm/digilompakko/pull/21)–[#30](https://github.com/tonibergholm/digilompakko/pull/30));
+> see the audit document for per-finding status. The architectural gap (HIGH-4) — mandatory
+> HAIP controls (DPoP, wallet/key attestations, `x509_hash` verifier authentication, encrypted
+> `direct_post.jwt` responses, `trusted_authorities`) — remains absent and requires additive
+> engineering tracked in `ROADMAP.md`. Status markers below reflect the current post-fix state;
+> do not read a "✅ demo" marker as "spec-conformant".
 
 ---
 
@@ -135,9 +135,9 @@ holder binding, replay protection, and minimal disclosure.
 | SD-JWT VC issuance (`dc+sd-jwt`) | `packages/core/src/sd-jwt.ts` `issueSdJwtVc()` | ✅ demo |
 | Selective disclosure (salted-hash digests) | `packages/core/src/sd-jwt.ts` | ✅ demo |
 | Holder binding via `cnf` + KB-JWT | `core` `createPresentation()` / `verifyPresentation()` | ✅ demo |
-| OpenID4VCI metadata + offer + token + credential | `apps/issuer` | 🟡 demo (pre-auth + Auth Code/PAR/PKCE; advertised token/PAR/code expiry **not yet enforced** — audit MEDIUM-2) |
-| OpenID4VP request with DCQL + nonce/aud | `apps/verifier` | 🟡 demo — request is built, but the DCQL query is **not enforced** against the response (audit HIGH-3) and sessions are **replayable** (audit HIGH-2) |
-| Verifier (RP) authentication in the wallet | `apps/wallet` | 🔴 **not safe** — `client_id`/JWKS are attacker-controlled and unsigned requests are accepted (audit HIGH-1) |
+| OpenID4VCI metadata + offer + token + credential | `apps/issuer` | ✅ demo (pre-auth + Auth Code/PAR/PKCE; token/PAR/auth-code expiry enforced server-side — MEDIUM-2 fixed, PR [#25](https://github.com/tonibergholm/digilompakko/pull/25)) |
+| OpenID4VP request with DCQL + nonce/aud | `apps/verifier` | ✅ demo — DCQL enforced against response (vct/doctype, required claims — HIGH-3 fixed, PR [#23](https://github.com/tonibergholm/digilompakko/pull/23)); sessions atomically consumed after use (HIGH-2 fixed, PR [#22](https://github.com/tonibergholm/digilompakko/pull/22)) |
+| Verifier (RP) authentication in the wallet | `apps/wallet` | 🟡 demo — unsigned requests rejected; JAR `alg`/`typ`/`exp`/`aud` validated; RP JWKS self-published (HIGH-1 fixed, PR [#21](https://github.com/tonibergholm/digilompakko/pull/21)); `x509_hash` binding absent (HAIP MUST — see §5a) |
 | ES256 / P-256 only | `packages/core/src/crypto.ts` | ✅ enforced |
 | Token Status List revocation (`statuslist+jwt`) | `core/src/status-list.ts`, issuer `/statuslist` + `/admin/revoke`, verifier check | ✅ demo |
 | Pluggable trust resolution (allow-list today) | `core/src/trust.ts` `StaticTrustResolver` | ✅ demo |
@@ -171,8 +171,7 @@ Until a full external conformance run passes, these must be listed as absent:
 | Ephemeral response-encryption keys | HAIP §8.6 | 🔴 absent | No JARM encryption |
 | `trusted_authorities` in DCQL | HAIP §8.7 | 🔴 absent | DCQL does not include trusted-authority constraints |
 
-> After the HIGH-1, HIGH-2, and HIGH-3 code fixes are merged, the corresponding rows in §5 and
-> this table will be updated. The HAIP MUST-level controls above require additive engineering work
+> HIGH-1, HIGH-2, and HIGH-3 are fixed (PRs [#21](https://github.com/tonibergholm/digilompakko/pull/21)–[#23](https://github.com/tonibergholm/digilompakko/pull/23)); §5 rows updated. The HAIP MUST-level controls above require additive engineering work
 > (DPoP, wallet/key attestations, encrypted responses) that is tracked in `ROADMAP.md`.
 
 ---
@@ -199,17 +198,11 @@ A production EUDI wallet additionally requires, and this demo deliberately does 
 
 The architecture is structured so each of these is an additive module, not a rewrite. See `ROADMAP.md`.
 
-**Correctness bugs (security findings — must be fixed before any production use):**
+**Correctness bugs (security findings — fixed 2026-06-09):**
 
-7. **Verifier authentication absent (HIGH-1):** The wallet accepts unsigned presentation requests
-   and authenticates the verifier's JWKS from an attacker-controlled URL. This is a security bug,
-   not a roadmap item. Fix tracked in issue [#9](https://github.com/tonibergholm/digilompakko/issues/9) / branch `fix/verifier-auth`.
-8. **Session replay (HIGH-2):** Presentation sessions are not consumed after a successful
-   verification — the same captured `vp_token` can be re-submitted. Fix tracked in issue
-   [#10](https://github.com/tonibergholm/digilompakko/issues/10) / branch `fix/presentation-replay`.
-9. **DCQL not enforced (HIGH-3):** The verifier generates a DCQL query but accepts any valid
-   credential regardless of type, requested claims, or format semantics. Fix tracked in issue
-   [#11](https://github.com/tonibergholm/digilompakko/issues/11) / branch `fix/enforce-dcql`.
+7. **Verifier authentication (HIGH-1):** ✅ Fixed — unsigned requests rejected; JAR `alg`/`typ`/`exp`/`aud` validated; RP JWKS anchored to trusted origin. PR [#21](https://github.com/tonibergholm/digilompakko/pull/21). (`x509_hash` certificate binding remains a HAIP MUST gap — see §5a.)
+8. **Session replay (HIGH-2):** ✅ Fixed — sessions atomically consumed before verification; 5-minute TTL enforced; replay and race-condition adversarial tests added. PR [#22](https://github.com/tonibergholm/digilompakko/pull/22).
+9. **DCQL not enforced (HIGH-3):** ✅ Fixed — `vp_token` validated against the stored DCQL query (format, `vct`/doctype, required claims); mdoc `docType` bound to MSO. PR [#23](https://github.com/tonibergholm/digilompakko/pull/23).
 
 ---
 
