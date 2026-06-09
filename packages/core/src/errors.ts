@@ -38,11 +38,19 @@ export class Oid4vcError extends Error {
   }
 }
 
-/** Express helper: send an Oid4vcError (or unknown error) as a spec-shaped response. */
+/**
+ * Express helper: send an Oid4vcError (or unknown error) as a spec-shaped response.
+ *
+ * LOW-1 fix: unexpected errors are logged to stderr but NOT echoed to the client.
+ * Raw exception messages can leak stack frames, internal paths, or dependency versions.
+ * Only Oid4vcError instances (with controlled, spec-registry codes) reach the response body.
+ */
 export function sendError(res: { status: (n: number) => { json: (b: unknown) => void } }, e: unknown): void {
   if (e instanceof Oid4vcError) {
     res.status(e.status).json(e.toJSON());
   } else {
-    res.status(500).json({ error: "server_error", error_description: (e as Error).message });
+    // Log the real cause server-side; return a generic message to the client.
+    console.error("[server_error]", e);
+    res.status(500).json({ error: "server_error", error_description: "an internal error occurred" });
   }
 }
