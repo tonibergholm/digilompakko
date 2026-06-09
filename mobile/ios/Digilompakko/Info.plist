@@ -24,13 +24,25 @@
     <array>
         <string>UIInterfaceOrientationPortrait</string>
     </array>
-    <!-- DEMO ONLY: allow cleartext to the local demo issuer/verifier. Remove for production. -->
+    <!-- MEDIUM-5 fix: NSAllowsArbitraryLoads (global cleartext) removed. Replaced with a
+         narrow localhost-only exception for the local demo. NSAllowsLocalNetworking covers
+         Bonjour/mDNS; NSExceptionDomains adds explicit HTTP only for localhost.
+         Real-device LAN testing requires HTTPS or adding the device IP here — never
+         re-enable NSAllowsArbitraryLoads. Remove this entire block for production. -->
     <key>NSAppTransportSecurity</key>
     <dict>
-        <key>NSAllowsArbitraryLoads</key>
-        <true/>
         <key>NSAllowsLocalNetworking</key>
         <true/>
+        <key>NSExceptionDomains</key>
+        <dict>
+            <key>localhost</key>
+            <dict>
+                <key>NSExceptionAllowsInsecureHTTPLoads</key>
+                <true/>
+                <key>NSIncludesSubdomains</key>
+                <false/>
+            </dict>
+        </dict>
     </dict>
 </dict>
 </plist>
