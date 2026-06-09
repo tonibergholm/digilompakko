@@ -41,6 +41,7 @@ It is the artefact to hand an auditor or a contributor asking "where is requirem
 | `vp_token` verification | OpenID4VP; HAIP | `core/src/sd-jwt.ts` `verifyPresentation` | `test/sd-jwt.test.ts` | ✅ |
 | Key Binding JWT (replay: nonce + aud) | IETF SD-JWT (KB-JWT) | `core/src/sd-jwt.ts`; `createPresentation` | `test/sd-jwt.test.ts` | ✅ |
 | mdoc DeviceAuth (nonce-bound) | ISO/IEC 18013-5 | `core/src/mdoc.ts` | `test/mdoc.test.ts` | ✅ (subset) |
+| Signed request object (JAR) | RFC 9101; HAIP | `core/src/request-object.ts`; verifier `/jwks.json` | `test/extras.test.ts` | ✅ |
 
 ## Trust, revocation & key management
 
@@ -48,7 +49,8 @@ It is the artefact to hand an auditor or a contributor asking "where is requirem
 |---|---|---|---|---|
 | Issuer trust resolution (pluggable) | ARF §Trusted Lists | `core/src/trust.ts` | `test/status-list.test.ts` | ✅ (static) |
 | Trusted Lists / Registrar client | ARF §Trust Model | — | — | 🟡 interface only |
-| Token Status List revocation | IETF Token Status List | `core/src/status-list.ts`; issuer `/statuslist`, `/admin/revoke` | `test/status-list.test.ts` | ✅ |
+| Token Status List revocation (SD-JWT VC) | IETF Token Status List | `core/src/status-list.ts`; issuer `/statuslist`, `/admin/revoke` | `test/status-list.test.ts` | ✅ |
+| Token Status List revocation (mdoc, status in MSO) | IETF Token Status List | `core/src/mdoc.ts`; verifier mdoc path | `test/extras.test.ts` | ✅ |
 | Credential expiry enforcement | SD-JWT / mdoc validity | `core/src/sd-jwt.ts`, `core/src/mdoc.ts` | live | ✅ |
 | WSCD key-storage boundary | ARF §WSCD | `core/src/keystore.ts` | `test/phase3.test.ts` | ✅ (software) |
 | Hardware-backed WSCD | ARF §WSCD / CC certification | — | — | ⬜ |

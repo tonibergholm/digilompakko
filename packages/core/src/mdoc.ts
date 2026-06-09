@@ -85,6 +85,8 @@ export interface MdocClaims {
   docType: string; // e.g. "org.iso.18013.5.1.mDL"
   namespaces: Record<string, Record<string, unknown>>; // ns -> {element: value}
   validityDays?: number;
+  /** Optional Token Status List reference embedded in the MSO for revocation. */
+  status?: { idx: number; uri: string };
 }
 
 /** Encoded issuer-signed mdoc (base64url of CBOR). Stored by the wallet. */
@@ -131,6 +133,14 @@ export async function issueMdoc(issuerPrivateJwk: JWK, holderPublicJwk: JWK, cre
       ["validUntil", now + (cred.validityDays ?? 365) * 86400],
     ])],
   ]);
+
+  // IETF Token Status List reference inside the MSO (mirrors SD-JWT VC `status`).
+  if (cred.status) {
+    mso.set("status", new Map([["status_list", new Map<string, unknown>([
+      ["idx", cred.status.idx],
+      ["uri", cred.status.uri],
+    ])]]));
+  }
 
   const issuerAuth = await coseSign1(issuerPrivateJwk, enc(tag24(enc(mso))));
   const issuerSigned = new Map<string, unknown>([
@@ -201,6 +211,8 @@ export interface MdocVerificationResult {
   valid: boolean;
   docType?: string;
   disclosedClaims: Record<string, Record<string, unknown>>; // ns -> {element: value}
+  /** Token Status List reference from the MSO, if present (for revocation checking). */
+  status?: { idx: number; uri: string };
   errors: string[];
 }
 
@@ -213,6 +225,7 @@ export async function verifyMdocPresentation(
   const errors: string[] = [];
   const disclosedClaims: Record<string, Record<string, unknown>> = {};
   let docType: string | undefined;
+  let status: { idx: number; uri: string } | undefined;
 
   try {
     const resp = dec(Buffer.from(deviceResponseB64, "base64url")) as Map<string, unknown>;
@@ -258,9 +271,16 @@ export async function verifyMdocPresentation(
     // 4. Validity window.
     const validity = mso.get("validityInfo") as Map<string, number>;
     if (validity.get("validUntil")! < Math.floor(Date.now() / 1000)) errors.push("mdoc expired");
+
+    // 5. Expose the MSO status reference (revocation is checked by the caller).
+    const statusMap = mso.get("status") as Map<string, unknown> | undefined;
+    if (statusMap) {
+      const sl = statusMap.get("status_list") as Map<string, unknown> | undefined;
+      if (sl) status = { idx: sl.get("idx") as number, uri: sl.get("uri") as string };
+    }
   } catch (e) {
     errors.push(`mdoc verification failed: ${(e as Error).message}`);
   }
 
-  return { valid: errors.length === 0, docType, disclosedClaims, errors };
+  return { valid: errors.length === 0, docType, disclosedClaims, status, errors };
 }

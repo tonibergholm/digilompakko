@@ -17,12 +17,29 @@ await wallet.init();
 const app = express();
 app.use(express.json());
 
-// Step 1: obtain a credential via a fresh offer from the issuer.
+const MDL_CONFIG_ID = "org.iso.18013.5.1.mDL";
+
+// Step 1: obtain a PID (SD-JWT VC) credential via a fresh offer from the issuer.
 app.post("/api/get-credential", async (_req, res) => {
   try {
     const offer = (await (await fetch(`${ISSUER_URL}/offer`, { method: "POST" })).json()) as CredentialOffer;
     const stored = await wallet.acceptOffer(offer);
     res.json({ ok: true, vct: stored.vct, count: wallet.credentials.length });
+  } catch (e) {
+    res.status(400).json({ ok: false, error: (e as Error).message });
+  }
+});
+
+// Step 1c: obtain an mDL (ISO 18013-5 mso_mdoc) credential.
+app.post("/api/get-mdl", async (_req, res) => {
+  try {
+    const offer = (await (await fetch(`${ISSUER_URL}/offer`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ credential_configuration_id: MDL_CONFIG_ID }),
+    })).json()) as CredentialOffer;
+    const stored = await wallet.acceptOffer(offer);
+    res.json({ ok: true, vct: stored.docType, count: wallet.credentials.length, flow: "mso_mdoc" });
   } catch (e) {
     res.status(400).json({ ok: false, error: (e as Error).message });
   }
@@ -38,11 +55,13 @@ app.post("/api/get-credential-authcode", async (_req, res) => {
   }
 });
 
-// Step 2: respond to a verifier presentation request.
+// Step 2: respond to a verifier presentation request. `format` selects SD-JWT VC or mdoc.
 app.post("/api/present", async (req, res) => {
   try {
     const reveal: string[] | undefined = req.body?.reveal;
-    const { request_uri } = (await (await fetch(`${VERIFIER_URL}/presentation/request`, { method: "POST" })).json()) as { request_uri: string };
+    const format: string = req.body?.format === "mso_mdoc" ? "mso_mdoc" : "dc+sd-jwt";
+    const url = `${VERIFIER_URL}/presentation/request${format === "mso_mdoc" ? "?format=mso_mdoc" : ""}`;
+    const { request_uri } = (await (await fetch(url, { method: "POST" })).json()) as { request_uri: string };
     const { result } = await wallet.present(request_uri, reveal);
     res.json({ ok: true, result });
   } catch (e) {
@@ -74,8 +93,9 @@ const UI = /* html */ `<!doctype html>
 <div class="card">
   <h2>1 · Get your PID credential</h2>
   <p class="muted">Wallet redeems a credential offer from the issuer and stores an SD-JWT VC bound to your holder key.</p>
-  <button id="get">Receive credential (pre-auth)</button>
-  <button id="getAuth">Receive via Auth Code + PAR + PKCE</button>
+  <button id="get">PID (pre-auth)</button>
+  <button id="getAuth">PID (Auth Code + PAR + PKCE)</button>
+  <button id="getMdl">mDL (mso_mdoc)</button>
   <p id="getOut"></p>
 </div>
 
@@ -87,27 +107,36 @@ const UI = /* html */ `<!doctype html>
     <label><input type="checkbox" class="rev" value="family_name" checked> family_name</label>
     <label><input type="checkbox" class="rev" value="age_over_18" checked> age_over_18</label>
   </div>
-  <p><button id="present" disabled>Present</button></p>
+  <p>
+    <button id="present" disabled>Present PID (SD-JWT VC)</button>
+    <button id="presentMdl" disabled>Present mDL (mdoc)</button>
+  </p>
   <pre id="presentOut" hidden></pre>
 </div>
 
 <script>
 const $ = (s) => document.querySelector(s);
-async function getCredential(endpoint) {
-  $("#get").disabled = true; $("#getAuth").disabled = true; $("#getOut").textContent = "Requesting…";
+async function getCredential(endpoint, presentBtn) {
+  for (const id of ["#get","#getAuth","#getMdl"]) $(id).disabled = true;
+  $("#getOut").textContent = "Requesting…";
   const r = await (await fetch(endpoint, {method:"POST"})).json();
-  if (r.ok) { $("#getOut").innerHTML = '<span class="ok">✓ stored ' + r.vct + (r.flow ? ' via ' + r.flow : '') + '</span>'; $("#present").disabled = false; }
-  else { $("#getOut").innerHTML = '<span class="bad">✗ ' + r.error + '</span>'; $("#get").disabled = false; $("#getAuth").disabled = false; }
+  if (r.ok) { $("#getOut").innerHTML = '<span class="ok">✓ stored ' + r.vct + (r.flow ? ' via ' + r.flow : '') + '</span>'; $(presentBtn).disabled = false; }
+  else { $("#getOut").innerHTML = '<span class="bad">✗ ' + r.error + '</span>'; }
+  for (const id of ["#get","#getAuth","#getMdl"]) $(id).disabled = false;
 }
-$("#get").onclick = () => getCredential("/api/get-credential");
-$("#getAuth").onclick = () => getCredential("/api/get-credential-authcode");
-$("#present").onclick = async () => {
+$("#get").onclick = () => getCredential("/api/get-credential", "#present");
+$("#getAuth").onclick = () => getCredential("/api/get-credential-authcode", "#present");
+$("#getMdl").onclick = () => getCredential("/api/get-mdl", "#presentMdl");
+
+async function present(format, btn) {
   const reveal = [...document.querySelectorAll(".rev:checked")].map(c=>c.value);
-  $("#present").disabled = true;
-  const r = await (await fetch("/api/present",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({reveal})})).json();
+  $(btn).disabled = true;
+  const r = await (await fetch("/api/present",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({reveal, format})})).json();
   const out = $("#presentOut"); out.hidden = false;
   out.textContent = JSON.stringify(r.ok ? r.result : {error:r.error}, null, 2);
-  $("#present").disabled = false;
-};
+  $(btn).disabled = false;
+}
+$("#present").onclick = () => present("dc+sd-jwt", "#present");
+$("#presentMdl").onclick = () => present("mso_mdoc", "#presentMdl");
 </script>
 </body></html>`;
