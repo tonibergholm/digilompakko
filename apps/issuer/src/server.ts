@@ -50,13 +50,14 @@ const issuedRecords: IssuedRecord[] = [];
 
 // --- In-memory issuance stores ---
 // A Pending records which credential configuration the holder is being issued.
-interface Pending { configId: string; cNonce?: string; accessToken?: string }
+// `issuedAt` is set when /token issues the access_token + c_nonce; used to enforce both TTLs.
+interface Pending { configId: string; cNonce?: string; accessToken?: string; issuedAt?: number }
 const offers = new Map<string, Pending>();             // pre-authorized_code -> pending
 const accessTokens = new Map<string, Pending>();        // access_token -> pending
 // Authorization Code flow (RFC 9126 PAR + RFC 7636 PKCE):
-interface ParRequest { clientId: string; codeChallenge: string; scope?: string }
+interface ParRequest { clientId: string; codeChallenge: string; scope?: string; createdAt: number }
 const parRequests = new Map<string, ParRequest>();      // request_uri -> PAR
-const authCodes = new Map<string, { codeChallenge: string; pending: Pending }>(); // code -> ...
+const authCodes = new Map<string, { codeChallenge: string; pending: Pending; createdAt: number }>(); // code -> ...
 
 const DEMO_PID: CredentialClaims = {
   vct: PID_CONFIG_ID,
@@ -86,6 +87,14 @@ const DEMO_MDL: MdocClaims = {
 };
 
 const SUPPORTED_CONFIGS = new Set([PID_CONFIG_ID, MDL_CONFIG_ID]);
+
+// Server-side TTL enforcement for all short-lived tokens (OpenID4VCI §7.2, RFC 6749 §4.1.2).
+// These MUST match (or be tighter than) the `expires_in` / `c_nonce_expires_in` values emitted
+// in token responses so that clients never hold a token they believe is valid but the server rejects.
+const ACCESS_TOKEN_TTL_MS = 5 * 60 * 1000; // 300 s — matches expires_in in /token response
+const C_NONCE_TTL_MS = 5 * 60 * 1000;      // 300 s — matches c_nonce_expires_in in /token response
+const AUTH_CODE_TTL_MS = 60 * 1000;         // 60 s  — RFC 6749 §4.1.2: short-lived auth codes
+const PAR_TTL_MS = 90 * 1000;               // 90 s  — matches expires_in in /par response
 
 // 1) Issuer metadata
 app.get("/.well-known/openid-credential-issuer", (_req, res) => {
@@ -145,7 +154,7 @@ app.post("/par", (req, res) => {
     if (code_challenge_method !== "S256") throw new Oid4vcError("invalid_request", "code_challenge_method must be S256");
     if (!code_challenge) throw new Oid4vcError("invalid_request", "missing code_challenge");
     const requestUri = `urn:ietf:params:oauth:request_uri:${randomUUID()}`;
-    parRequests.set(requestUri, { clientId: client_id, codeChallenge: code_challenge, scope });
+    parRequests.set(requestUri, { clientId: client_id, codeChallenge: code_challenge, scope, createdAt: Date.now() });
     res.json({ request_uri: requestUri, expires_in: 90 });
   } catch (e) {
     sendError(res, e);
@@ -159,8 +168,13 @@ app.get("/authorize", (req, res) => {
     const requestUri = String(req.query.request_uri ?? "");
     const par = parRequests.get(requestUri);
     if (!par) throw new Oid4vcError("invalid_request", "unknown or expired request_uri");
+    // RFC 9126 §2.3: the request_uri MUST expire after the advertised `expires_in` seconds.
+    if (Date.now() - par.createdAt > PAR_TTL_MS) {
+      parRequests.delete(requestUri);
+      throw new Oid4vcError("invalid_request", "request_uri expired");
+    }
     const code = randomUUID();
-    authCodes.set(code, { codeChallenge: par.codeChallenge, pending: { configId: PID_CONFIG_ID } });
+    authCodes.set(code, { codeChallenge: par.codeChallenge, pending: { configId: PID_CONFIG_ID }, createdAt: Date.now() });
     parRequests.delete(requestUri);
     // A real flow redirects to the wallet's redirect_uri with ?code=…; the demo returns JSON.
     res.json({ code });
@@ -179,6 +193,11 @@ app.post("/token", (req, res) => {
       const code = req.body?.code;
       const entry = code ? authCodes.get(code) : undefined;
       if (!entry) throw new Oid4vcError("invalid_grant", "unknown authorization code");
+      // RFC 6749 §4.1.2: authorization codes MUST be short-lived and single-use.
+      if (Date.now() - entry.createdAt > AUTH_CODE_TTL_MS) {
+        authCodes.delete(code);
+        throw new Oid4vcError("invalid_grant", "authorization code expired");
+      }
       verifyPkce(req.body?.code_verifier, entry.codeChallenge); // throws on mismatch
       authCodes.delete(code);
       pending = entry.pending;
@@ -193,8 +212,11 @@ app.post("/token", (req, res) => {
     const cNonce = randomUUID();
     pending.accessToken = accessToken;
     pending.cNonce = cNonce;
+    // Record issuance time; used to enforce both the access-token TTL and the c_nonce TTL.
+    // OpenID4VCI §7.2: c_nonce_expires_in informs the wallet when to refresh the nonce.
+    pending.issuedAt = Date.now();
     accessTokens.set(accessToken, pending);
-    res.json({ access_token: accessToken, token_type: "bearer", expires_in: 300, c_nonce: cNonce });
+    res.json({ access_token: accessToken, token_type: "bearer", expires_in: 300, c_nonce: cNonce, c_nonce_expires_in: 300 });
   } catch (e) {
     sendError(res, e);
   }
@@ -206,6 +228,11 @@ app.post("/credential", async (req, res) => {
     const accessToken = (req.header("authorization") ?? "").replace(/^Bearer\s+/i, "");
     const pending = accessTokens.get(accessToken);
     if (!pending) throw new Oid4vcError("invalid_token", "unknown access token", 401);
+    // RFC 6749 §5.1: enforce the advertised access-token lifetime (expires_in: 300).
+    if (Date.now() - (pending.issuedAt ?? 0) > ACCESS_TOKEN_TTL_MS) {
+      accessTokens.delete(accessToken);
+      throw new Oid4vcError("invalid_token", "access token expired", 401);
+    }
 
     const proofJwt: string | undefined = req.body?.proof?.jwt;
     if (!proofJwt) throw new Oid4vcError("invalid_proof", "missing proof.jwt");
@@ -219,6 +246,8 @@ app.post("/credential", async (req, res) => {
       const key = await importJWK(holderJwk, ALG);
       const { payload } = await jwtVerify(proofJwt, key, { typ: "openid4vci-proof+jwt" });
       if (payload.nonce !== pending.cNonce) throw new Error("c_nonce mismatch");
+      // OpenID4VCI §7.2: the c_nonce is valid only for c_nonce_expires_in seconds.
+      if (Date.now() - (pending.issuedAt ?? 0) > C_NONCE_TTL_MS) throw new Error("c_nonce expired");
       if (payload.aud !== ISSUER_URL) throw new Error("aud mismatch");
     } catch (e) {
       throw new Oid4vcError("invalid_proof", (e as Error).message);
