@@ -26,24 +26,44 @@ test("StatusList: set/get and compress/decompress roundtrip", () => {
   assert.equal((bytes[10 >> 3] >> (10 & 7)) & 1, 1);
 });
 
+const OPTS = { expectedIssuer: ISSUER, expectedUri: URI };
+
 test("Status List Token: valid then revoked", async () => {
   const keys = await generateP256KeyPair();
   const list = new StatusList(128);
   const idx = 42;
 
   let token = await buildStatusListToken(keys.privateJwk, ISSUER, URI, list);
-  assert.equal(await readStatus(token, idx, keys.publicJwk), STATUS_VALID);
+  assert.equal(await readStatus(token, idx, keys.publicJwk, OPTS), STATUS_VALID);
 
   list.set(idx, 1); // revoke
   token = await buildStatusListToken(keys.privateJwk, ISSUER, URI, list);
-  assert.equal(await readStatus(token, idx, keys.publicJwk), STATUS_INVALID);
+  assert.equal(await readStatus(token, idx, keys.publicJwk, OPTS), STATUS_INVALID);
 });
 
 test("Status List Token: wrong key is rejected", async () => {
   const keys = await generateP256KeyPair();
   const attacker = await generateP256KeyPair();
   const token = await buildStatusListToken(keys.privateJwk, ISSUER, URI, new StatusList(8));
-  await assert.rejects(() => readStatus(token, 0, attacker.publicJwk), /status list token invalid/);
+  await assert.rejects(() => readStatus(token, 0, attacker.publicJwk, OPTS), /status list token invalid/);
+});
+
+test("Status List Token: wrong issuer is rejected (MEDIUM-3)", async () => {
+  const keys = await generateP256KeyPair();
+  const token = await buildStatusListToken(keys.privateJwk, ISSUER, URI, new StatusList(8));
+  await assert.rejects(
+    () => readStatus(token, 0, keys.publicJwk, { expectedIssuer: "https://other.example", expectedUri: URI }),
+    /status list token invalid/,
+  );
+});
+
+test("Status List Token: wrong URI (sub) is rejected (MEDIUM-3)", async () => {
+  const keys = await generateP256KeyPair();
+  const token = await buildStatusListToken(keys.privateJwk, ISSUER, URI, new StatusList(8));
+  await assert.rejects(
+    () => readStatus(token, 0, keys.publicJwk, { expectedIssuer: ISSUER, expectedUri: `${ISSUER}/other-list` }),
+    /sub mismatch/,
+  );
 });
 
 test("StaticTrustResolver: untrusted issuer rejected before any fetch", async () => {

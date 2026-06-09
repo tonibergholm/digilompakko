@@ -77,22 +77,50 @@ export async function buildStatusListToken(
 
 /**
  * Verify a Status List Token and read the status at `idx`.
- * Throws Oid4vcError on signature/parse failure.
+ *
+ * Validation performed (draft-ietf-oauth-status-list §5):
+ *   - Signature against `issuerPublicJwk` (ES256, typ `statuslist+jwt`)
+ *   - `iss` == opts.expectedIssuer — prevents cross-issuer token substitution
+ *   - `sub` == opts.expectedUri   — ensures the token was issued for this URI
+ *   - `bits` == 1                 — this implementation only handles 1-bit entries
+ *   - `idx` in range              — prevents out-of-bounds reads
+ *
+ * Throws Oid4vcError on any failure.
  */
 export async function readStatus(
   statusListToken: string,
   idx: number,
   issuerPublicJwk: JWK,
+  opts: { expectedIssuer: string; expectedUri: string },
 ): Promise<number> {
   let payload: Record<string, unknown>;
   try {
     const key = await importJWK(issuerPublicJwk, ALG);
-    ({ payload } = await jwtVerify(statusListToken, key, { typ: "statuslist+jwt" }) as { payload: Record<string, unknown> });
+    ({ payload } = await jwtVerify(statusListToken, key, {
+      typ: "statuslist+jwt",
+      // draft-ietf-oauth-status-list §5.1: `iss` MUST match the credential issuer.
+      issuer: opts.expectedIssuer,
+    }) as { payload: Record<string, unknown> });
   } catch (e) {
     throw new Oid4vcError("status_unavailable", `status list token invalid: ${(e as Error).message}`);
   }
+
+  // draft-ietf-oauth-status-list §5.1: `sub` MUST equal the URI the token was fetched from.
+  // This prevents an attacker from serving a valid token for a different status list.
+  if (payload.sub !== opts.expectedUri) {
+    throw new Oid4vcError(
+      "status_unavailable",
+      `status list token sub mismatch: expected ${opts.expectedUri}, got ${String(payload.sub)}`,
+    );
+  }
+
   const sl = payload.status_list as { bits?: number; lst?: string } | undefined;
   if (!sl?.lst) throw new Oid4vcError("status_unavailable", "status list token missing status_list.lst");
+  // Only 1-bit-per-entry lists are supported; a different `bits` value means the list uses a
+  // different encoding and reading it with 1-bit arithmetic would silently return wrong results.
+  if (sl.bits !== 1) {
+    throw new Oid4vcError("status_unavailable", `unsupported status_list bits value: ${sl.bits} (expected 1)`);
+  }
 
   const bytes = StatusList.decodeBytes(sl.lst);
   const byte = idx >> 3;
