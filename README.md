@@ -5,8 +5,9 @@
 > Interoperability Profile (HAIP) 1.0**.
 
 This project demonstrates the complete **issue → hold → present → verify** flow for a European
-Digital Identity Wallet using **SD-JWT VC** credentials over **OpenID4VCI** and **OpenID4VP**, with
-real selective disclosure and ES256 holder binding.
+Digital Identity Wallet using **both credential formats** — **SD-JWT VC** and **ISO 18013-5 mdoc /
+mDL** — over **OpenID4VCI** and **OpenID4VP**, with real selective disclosure, ES256 holder binding,
+revocation, signed request objects, and a WSCD key-storage boundary.
 
 It exists alongside Finland's *Suomi.fi Wallet* (being procured by DVV under eIDAS 2.0) as an
 approachable, readable TypeScript reference. **It is a learning/conformance reference, not a
@@ -19,15 +20,18 @@ Compliance is a *stack*, not one document. This repo implements the core of it a
 
 | Concern | Standard | Status |
 |---------|----------|--------|
-| Credential format | IETF **SD-JWT VC** (`dc+sd-jwt`) | ✅ |
-| Selective disclosure | salted-hash digests in `_sd` | ✅ |
-| Holder binding | `cnf` + **Key Binding JWT** | ✅ |
-| Issuance | **OpenID4VCI 1.0** (pre-auth flow) | ✅ |
-| Presentation | **OpenID4VP 1.0** + **DCQL** | ✅ |
+| Credential format A | IETF **SD-JWT VC** (`dc+sd-jwt`), selective disclosure | ✅ |
+| Credential format B | **ISO 18013-5 mdoc / mDL** (`mso_mdoc`, CBOR/COSE) | ✅ |
+| Holder / device binding | `cnf` + **Key Binding JWT** · mdoc **DeviceAuth** | ✅ |
+| Issuance | **OpenID4VCI 1.0** — pre-auth + **Authorization Code + PAR + PKCE** | ✅ |
+| Presentation | **OpenID4VP 1.0** + **DCQL**, both formats | ✅ |
+| Request authenticity | **signed request objects** (JAR, RFC 9101) | ✅ |
 | Crypto suite | **ES256 / P-256** (HAIP) | ✅ |
-| Revocation | **IETF Token Status List** (`statuslist+jwt`) | ✅ |
+| Revocation | **IETF Token Status List** — SD-JWT VC **and** mdoc | ✅ |
 | Trust resolution | pluggable resolver + static trusted list | ✅ |
-| mdoc / ISO 18013-5, real trusted lists, secure element | — | ⬜ roadmap |
+| Key-storage boundary | **WSCD** abstraction (software keystore) | ✅ |
+| RP governance | registration + attribute-entitlement gate | ✅ |
+| Hardware WSCD, real trusted lists, proximity (BLE/NFC), certification | — | ⬜ roadmap |
 
 Full mapping with requirement traceability: **[`docs/COMPLIANCE.md`](docs/COMPLIANCE.md)**,
 **[`docs/TRACEABILITY.md`](docs/TRACEABILITY.md)** (capability → code → test), and
@@ -60,21 +64,25 @@ npm start
 # then visit http://localhost:4000
 ```
 
-In the UI: click **Receive credential** (OpenID4VCI), then tick which claims to share and click
-**Present** (OpenID4VP). The verifier returns exactly — and only — the claims you disclosed.
+In the UI: get a **PID** (pre-auth or Authorization Code + PAR + PKCE) or an **mDL** (`mso_mdoc`),
+tick which claims to share, and **Present** to the verifier. The wallet first verifies the verifier's
+signed request object, then returns exactly — and only — the claims you disclosed.
 
 ## Layout
 
 ```
-packages/core   trust-critical library: crypto, SD-JWT VC issue/verify, KB-JWT
-apps/issuer     OpenID4VCI 1.0 issuer (port 4001)
-apps/verifier   OpenID4VP 1.0 verifier (port 4002)
+packages/core   trust-critical library: crypto, SD-JWT VC, mdoc (CBOR/COSE), Token Status List,
+                trust resolver, WSCD keystore, PKCE, RP registry, signed request objects, errors
+apps/issuer     OpenID4VCI 1.0 issuer — pre-auth + Auth Code/PAR/PKCE, status list (port 4001)
+apps/verifier   OpenID4VP 1.0 verifier — DCQL, trust, revocation, signed requests (port 4002)
 apps/wallet     holder wallet + web UI (port 4000)
-scripts/demo.ts headless end-to-end demo
-docs/           COMPLIANCE.md · ARCHITECTURE.md · ROADMAP.md
+scripts/demo.ts headless end-to-end demo (both formats)
+docs/           COMPLIANCE · ARCHITECTURE · ROADMAP · TRACEABILITY · CONFORMANCE · PRODUCTIONIZATION
 ```
 
 ## Revocation demo
+
+Works for both formats — the PID (SD-JWT VC) and the mDL (mdoc, status reference in the MSO):
 
 ```bash
 npm start
@@ -87,9 +95,10 @@ curl -X POST localhost:4001/admin/revoke -H 'content-type: application/json' -d 
 
 Issues and PRs welcome. **Please read [`CLAUDE.md`](CLAUDE.md) and [`CONTRIBUTING.md`](CONTRIBUTING.md)
 first** — all changes use a **worktree + PR-into-`main`** workflow, Conventional Commits, and must
-keep `npm run build` and `npm test` green. The [roadmap](docs/ROADMAP.md) lists the next compliance
-modules (mdoc/ISO 18013-5, real trusted lists, secure-element key storage). Keep trust-critical code
-in `packages/core` with tests. See also [`SECURITY.md`](SECURITY.md) and [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md).
+keep `npm run build` and `npm test` green. The [roadmap](docs/ROADMAP.md) lists what's next — mostly
+the real-world track (hardware WSCD, real PID/eID, live trusted lists, proximity, certification) plus
+remaining protocol refinements (full 18013-5 SessionTranscript + `deviceMac`, response encryption).
+Keep trust-critical code in `packages/core` with tests. See also [`SECURITY.md`](SECURITY.md) and [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md).
 
 ## License
 
