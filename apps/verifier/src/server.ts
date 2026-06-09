@@ -79,7 +79,18 @@ const DCQL_MDL = {
 };
 
 type Format = "dc+sd-jwt" | "mso_mdoc";
-interface Session { nonce: string; format: Format; result?: unknown }
+interface Session {
+  nonce: string;
+  format: Format;
+  /** Epoch ms when the session was created — used to enforce SESSION_TTL_MS. */
+  createdAt: number;
+  /** True once a vp_token has been accepted for this session. Any further submission is replay. */
+  consumed: boolean;
+  result?: unknown;
+}
+// OpenID4VP §6.2: the verifier MUST ensure each nonce is used only once.  A session that has
+// already received a valid vp_token, or that was created more than SESSION_TTL_MS ago, is refused.
+const SESSION_TTL_MS = 5 * 60 * 1000; // 5 minutes
 const sessions = new Map<string, Session>();
 
 // Verifier (RP) public key — the wallet verifies signed request objects against this.
@@ -99,7 +110,7 @@ app.post("/presentation/request", (req, res) => {
     const format: Format = req.query.format === "mso_mdoc" ? "mso_mdoc" : "dc+sd-jwt";
     const id = randomUUID();
     const nonce = randomUUID();
-    sessions.set(id, { nonce, format });
+    sessions.set(id, { nonce, format, createdAt: Date.now(), consumed: false });
     res.json({ request_id: id, request_uri: `${VERIFIER_URL}/presentation/request/${id}` });
   } catch (e) {
     sendError(res, e);
@@ -129,8 +140,24 @@ app.post("/presentation/response", async (req, res) => {
     const session = sessions.get(id);
     if (!session) throw new Oid4vcError("invalid_request", "unknown presentation session", 404);
 
+    // --- Replay and expiry checks (synchronous, before any await) ---
+    // Setting consumed=true before the first await is intentional: in Node.js a single-threaded
+    // event loop can interleave two concurrent POSTs at every await point.  By mutating the flag
+    // synchronously we make the "check + mark" atomic with respect to the event loop.
+    // OpenID4VP §6.2 / HAIP: a nonce MUST NOT be reused across presentations.
+    if (Date.now() - session.createdAt > SESSION_TTL_MS) {
+      sessions.delete(id);
+      throw new Oid4vcError("invalid_request", "presentation session expired");
+    }
+    if (session.consumed) {
+      throw new Oid4vcError("invalid_request", "presentation session already used (replay rejected)");
+    }
+
     const vpToken: string | undefined = req.body?.vp_token;
     if (!vpToken) throw new Oid4vcError("invalid_presentation", "missing vp_token");
+
+    // Consume the session atomically before yielding to any async work.
+    session.consumed = true;
 
     // --- mdoc (mso_mdoc) path: the DeviceResponse carries no issuer URL, so we resolve the
     //     issuer key from our trusted issuer's metadata. (A full 18013-5 flow uses the issuerAuth
