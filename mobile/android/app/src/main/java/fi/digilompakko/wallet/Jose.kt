@@ -49,6 +49,25 @@ object Jose {
         return JSONObject(String(b64urlDecode(parts[1])))
     }
 
+    /** Verify an OpenID4VP signed request object (JAR — RFC 9101).
+     *  Checks alg, typ, exp, aud in addition to the ES256 signature. */
+    // MEDIUM-4: mobile wallet must validate alg, typ, exp, aud on JAR (HAIP §4.1, RFC 9101 §4)
+    fun verifyRequestObject(compact: String, jwk: JWK, expectedAudience: String): JSONObject {
+        val parts = compact.split(".")
+        require(parts.size == 3) { "malformed request object" }
+        val header = JSONObject(String(b64urlDecode(parts[0])))
+        require(header.optString("alg") == "ES256") { "request object: alg must be ES256" }
+        require(header.optString("typ") == "oauth-authz-req+jwt") { "request object: typ must be oauth-authz-req+jwt" }
+        val payload = verifyJWS(compact, jwk)
+        require(payload.has("exp")) { "request object: missing exp" }
+        val exp = payload.getLong("exp")
+        require(exp > System.currentTimeMillis() / 1000) { "request object: expired" }
+        require(payload.optString("aud") == expectedAudience) {
+            "request object: aud mismatch (expected $expectedAudience)"
+        }
+        return payload
+    }
+
     /** Read a JWT payload WITHOUT verifying (e.g. to find client_id before fetching JWKS). */
     fun decodeUnverifiedPayload(compact: String): JSONObject {
         val parts = compact.split(".")

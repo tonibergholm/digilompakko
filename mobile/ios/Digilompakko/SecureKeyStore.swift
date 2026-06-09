@@ -57,10 +57,11 @@ final class SecureKeyStore {
 
     private func accessControl() throws -> SecAccessControl {
         var error: Unmanaged<CFError>?
+        // MEDIUM-4: require user authentication (Face ID / Touch ID) for Secure Enclave key use
         guard let ac = SecAccessControlCreateWithFlags(
             kCFAllocatorDefault,
             kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
-            [.privateKeyUsage], &error) else {
+            [.privateKeyUsage, .userPresence], &error) else {
             throw error!.takeRetainedValue() as Error
         }
         return ac

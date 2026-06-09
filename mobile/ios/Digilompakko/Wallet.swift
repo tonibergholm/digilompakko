@@ -82,7 +82,8 @@ final class WalletModel: ObservableObject {
                 let jwks = try await getJSON("\(clientId)/jwks.json")
                 guard let keys = jwks["keys"] as? [[String: Any]], let k = keys.first,
                       let jwk = JWK(dict: k) else { throw WalletError.verification("no RP key") }
-                request = try Jose.verifyJWS(jar, jwk: jwk)
+                // MEDIUM-4: verify alg, typ, exp, aud in addition to the ES256 signature (HAIP §4.1)
+                request = try Jose.verifyRequestObject(jar, jwk: jwk, expectedAudience: "digilompakko-wallet")
             } else {
                 request = raw
             }

@@ -76,6 +76,33 @@ enum Jose {
         return try decodeJSON(parts[1])
     }
 
+    /// Verify an OpenID4VP signed request object (JAR — RFC 9101).
+    /// Checks header alg + typ, verifies the ES256 signature, then validates exp and aud.
+    // MEDIUM-4: mobile wallet must validate alg, typ, exp, aud on JAR (HAIP §4.1, RFC 9101 §4)
+    @discardableResult
+    static func verifyRequestObject(_ compact: String, jwk: JWK, expectedAudience: String) throws -> [String: Any] {
+        let parts = compact.split(separator: ".", omittingEmptySubsequences: false).map(String.init)
+        guard parts.count == 3 else { throw WalletError.verification("malformed request object") }
+        let header = try decodeJSON(parts[0])
+        guard let alg = header["alg"] as? String, alg == "ES256" else {
+            throw WalletError.verification("request object: alg must be ES256")
+        }
+        guard let typ = header["typ"] as? String, typ == "oauth-authz-req+jwt" else {
+            throw WalletError.verification("request object: typ must be oauth-authz-req+jwt")
+        }
+        let payload = try verifyJWS(compact, jwk: jwk)
+        guard let exp = payload["exp"] as? Double else {
+            throw WalletError.verification("request object: missing exp")
+        }
+        guard exp > Date().timeIntervalSince1970 else {
+            throw WalletError.verification("request object: expired")
+        }
+        guard let aud = payload["aud"] as? String, aud == expectedAudience else {
+            throw WalletError.verification("request object: aud mismatch (expected \(expectedAudience))")
+        }
+        return payload
+    }
+
     /// Read a JWT payload WITHOUT verifying (e.g. to discover `client_id` before fetching JWKS).
     static func decodeUnverifiedPayload(_ compact: String) throws -> [String: Any] {
         let parts = compact.split(separator: ".", omittingEmptySubsequences: false).map(String.init)
