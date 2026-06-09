@@ -50,6 +50,11 @@ native for exactly these reasons. This repo's TypeScript wallet is a protocol de
 holder app would be rebuilt natively (the issuer/verifier services can remain server-side). The
 `core` library's logic is the reusable spec; the holder UI/keystore are platform work.
 
+A **native scaffold now exists** under [`mobile/`](../mobile/README.md): a Swift/SwiftUI iOS app and
+a Kotlin/Compose Android app that issue and present **SD-JWT VC** against the demo services with
+holder keys in the **Secure Enclave** / **StrongBox** and a selective-disclosure UI. It is a starting
+point — mdoc, hardware key attestation, and the rest of this section's items are still to come.
+
 ### 2.3 Real PID issuance and identity proofing
 
 Issuing the PID must be bound to the **Population Information System** and to **strong identification**
