@@ -177,7 +177,7 @@ app.post("/presentation/response", async (req, res) => {
       // Revocation: if the MSO carries a status reference, check the Token Status List.
       if (mResult.valid && mResult.status) {
         const token = await safeFetchText(mResult.status.uri);
-        const status = await readStatus(token, mResult.status.idx, issuerKey);
+        const status = await readStatus(token, mResult.status.idx, issuerKey, { expectedIssuer: TRUSTED[0], expectedUri: mResult.status.uri });
         if (status === STATUS_INVALID) {
           mResult.valid = false;
           mResult.errors.push("credential_revoked");
@@ -208,7 +208,7 @@ app.post("/presentation/response", async (req, res) => {
       const statusRef = (result.issuerClaims.status as { status_list?: { idx: number; uri: string } } | undefined)?.status_list;
       if (statusRef) {
         const token = await safeFetchText(statusRef.uri);
-        const status = await readStatus(token, statusRef.idx, issuerKey);
+        const status = await readStatus(token, statusRef.idx, issuerKey, { expectedIssuer: issuer, expectedUri: statusRef.uri });
         if (status === STATUS_INVALID) {
           result.valid = false;
           result.errors.push("credential_revoked");

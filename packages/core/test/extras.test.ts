@@ -35,11 +35,12 @@ test("mdoc revocation: MSO status reference is surfaced and reflects the status 
   assert.deepEqual(r.status, { idx, uri: STATUS_URI }); // reference surfaced
 
   // Valid while the bit is 0; revoked once set.
+  const statusOpts = { expectedIssuer: "https://issuer.example", expectedUri: STATUS_URI };
   let token = await buildStatusListToken(issuer.privateJwk, "https://issuer.example", STATUS_URI, list);
-  assert.notEqual(await readStatus(token, idx, issuer.publicJwk), STATUS_INVALID);
+  assert.notEqual(await readStatus(token, idx, issuer.publicJwk, statusOpts), STATUS_INVALID);
   list.set(idx, 1);
   token = await buildStatusListToken(issuer.privateJwk, "https://issuer.example", STATUS_URI, list);
-  assert.equal(await readStatus(token, idx, issuer.publicJwk), STATUS_INVALID);
+  assert.equal(await readStatus(token, idx, issuer.publicJwk, statusOpts), STATUS_INVALID);
 });
 
 test("signed request object (JAR): valid passes, tampered/forged fails", async () => {
