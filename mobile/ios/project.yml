@@ -1,0 +1,24 @@
+# XcodeGen spec — run `xcodegen generate` in this folder to produce Digilompakko.xcodeproj,
+# then open it in Xcode. (Install XcodeGen: `brew install xcodegen`.)
+name: Digilompakko
+options:
+  bundleIdPrefix: fi.digilompakko
+  deploymentTarget:
+    iOS: "16.0"
+  createIntermediateGroups: true
+targets:
+  Digilompakko:
+    type: application
+    platform: iOS
+    sources:
+      - Digilompakko
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: fi.digilompakko.wallet
+        INFOPLIST_FILE: Digilompakko/Info.plist
+        TARGETED_DEVICE_FAMILY: "1,2"
+        SWIFT_VERSION: "5.9"
+        GENERATE_INFOPLIST_FILE: NO
+        CODE_SIGN_STYLE: Automatic
+        MARKETING_VERSION: "0.1.0"
+        CURRENT_PROJECT_VERSION: "1"

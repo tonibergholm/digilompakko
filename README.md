@@ -77,8 +77,17 @@ apps/issuer     OpenID4VCI 1.0 issuer — pre-auth + Auth Code/PAR/PKCE, status 
 apps/verifier   OpenID4VP 1.0 verifier — DCQL, trust, revocation, signed requests (port 4002)
 apps/wallet     holder wallet + web UI (port 4000)
 scripts/demo.ts headless end-to-end demo (both formats)
+mobile/         native iOS (Swift/SwiftUI) + Android (Kotlin/Compose) wallets — see mobile/README.md
 docs/           COMPLIANCE · ARCHITECTURE · ROADMAP · TRACEABILITY · CONFORMANCE · PRODUCTIONIZATION
 ```
+
+## Native mobile wallets
+
+Native **iOS (Swift)** and **Android (Kotlin)** holder apps live in [`mobile/`](mobile/README.md).
+They run the same OpenID4VCI / OpenID4VP flows with **hardware-backed keys** — iOS **Secure Enclave**
+and Android **StrongBox** — and a polished selective-disclosure UI. They issue and present **SD-JWT VC**
+against the demo services today; mdoc is the next milestone. See [`mobile/README.md`](mobile/README.md)
+for build/run instructions.
 
 ## Revocation demo
 

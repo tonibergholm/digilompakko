@@ -6,6 +6,16 @@ All notable changes to this project are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Added — native mobile wallets (iOS + Android)
+- **iOS** (`mobile/ios`, Swift/SwiftUI): holder key in the **Secure Enclave** (software fallback on
+  Simulator), ES256 JOSE, SD-JWT VC parse/present, OpenID4VCI issuance + OpenID4VP presentation that
+  verifies the verifier's signed request object (JAR), and a polished selective-disclosure UI.
+  XcodeGen project + ATS config for the local demo services.
+- **Android** (`mobile/android`, Kotlin/Compose): holder key in **StrongBox** / TEE keystore,
+  ES256 with DER↔JOSE conversion, the same SD-JWT VC issue/present flow, and a Compose UI with
+  per-attribute disclosure toggles. Gradle project + network-security config.
+- Both apps talk to the existing demo issuer/verifier; mdoc/mDL on native is the next milestone.
+
 ### Added — mdoc revocation + OpenID4VP signed request objects
 - **mdoc revocation**: `issueMdoc` embeds a Token Status List reference in the MSO; the issuer
   assigns mDLs a status index; `verifyMdocPresentation` surfaces it; the verifier fetches the status

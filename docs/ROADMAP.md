@@ -46,3 +46,12 @@ Status legend: ✅ done in demo · 🟡 partial · ⬜ planned
 - 🟡 Documented mapping to exact ARF requirement IDs (matrix maps by capability; per-ID pinning ongoing)
 - ⬜ Recorded OpenID Foundation conformance-suite runs (`docs/conformance-runs/`)
 - ⬜ EU Launchpad interop event results
+
+## Phase 5 — Native mobile clients (`mobile/`)
+- ✅ iOS (Swift/SwiftUI): Secure Enclave holder key, SD-JWT VC issue + present, signed-request
+  verification, selective-disclosure UI
+- ✅ Android (Kotlin/Compose): StrongBox/TEE holder key, SD-JWT VC issue + present, Compose UI
+- ⬜ mdoc / mDL (`mso_mdoc`) on native (CBOR/COSE in Swift + Kotlin)
+- ⬜ Authorization Code + PAR + PKCE on native; mdoc revocation display
+- ⬜ Hardware key attestation; biometric gating of signing
+- ⬜ Proximity presentation (BLE/NFC, ISO 18013-5/-7)
