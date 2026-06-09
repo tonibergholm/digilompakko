@@ -19,6 +19,26 @@ relate to hardening and supply-chain posture.
 A manual proof was made that a signed wrong-type SD-JWT VC with zero disclosures is accepted by
 `verifyPresentation()` — confirming HIGH-3 (DCQL not enforced).
 
+## Remediation status (as of 2026-06-09)
+
+All 11 code-level findings fixed and merged. HIGH-4 (HAIP MUST-level architectural gaps) is a
+documentation correctness finding addressed by correcting compliance tables; the underlying
+controls remain absent and are tracked in `ROADMAP.md`.
+
+| Finding | PR | Merged |
+|---|---|---|
+| HIGH-1 — Wallet verifier authentication | [#21](https://github.com/tonibergholm/digilompakko/pull/21) | ✅ |
+| HIGH-2 — Session replay | [#22](https://github.com/tonibergholm/digilompakko/pull/22) | ✅ |
+| HIGH-3 — DCQL not enforced | [#23](https://github.com/tonibergholm/digilompakko/pull/23) | ✅ |
+| HIGH-4 — HAIP MUST controls (docs corrected) | [#20](https://github.com/tonibergholm/digilompakko/pull/20) | ✅ |
+| MEDIUM-1 — SSRF / unrestricted outbound fetches | [#24](https://github.com/tonibergholm/digilompakko/pull/24) | ✅ |
+| MEDIUM-2 — Token/auth-code expiry not enforced | [#25](https://github.com/tonibergholm/digilompakko/pull/25) | ✅ |
+| MEDIUM-3 — Status-token claim validation | [#26](https://github.com/tonibergholm/digilompakko/pull/26) | ✅ |
+| MEDIUM-4 — Mobile crypto validation + user auth | [#27](https://github.com/tonibergholm/digilompakko/pull/27) | ✅ |
+| MEDIUM-5 — iOS ATS broad exception | [#28](https://github.com/tonibergholm/digilompakko/pull/28) | ✅ |
+| LOW-1 — Error response information disclosure | [#30](https://github.com/tonibergholm/digilompakko/pull/30) | ✅ |
+| LOW-2 — Supply-chain controls | [#29](https://github.com/tonibergholm/digilompakko/pull/29) | ✅ |
+
 ---
 
 ## Findings
@@ -39,7 +59,8 @@ destinations used by the wallet during a presentation flow.
 `x509_hash` client identifier with a trusted cert chain / access-certificate policy; bind and
 validate `client_id`, `response_uri`, request URI, audience, expiry, and request-object `typ`.
 
-**GitHub issue:** [#9](https://github.com/tonibergholm/digilompakko/issues/9)
+**GitHub issue:** [#9](https://github.com/tonibergholm/digilompakko/issues/9)  
+**Status:** ✅ Fixed — PR [#21](https://github.com/tonibergholm/digilompakko/pull/21). Unsigned requests now rejected; JAR `alg`/`typ`/`exp`/`aud` validated; RP JWKS anchored to trusted origin. (`x509_hash` certificate binding is a HAIP MUST gap, tracked separately.)
 
 ---
 
@@ -57,7 +78,8 @@ that a *different* nonce fails, but do not test one-time session consumption.
 attempted; reject all subsequent responses including concurrent submissions; add tests for
 exact-token replay and race conditions.
 
-**GitHub issue:** [#10](https://github.com/tonibergholm/digilompakko/issues/10)
+**GitHub issue:** [#10](https://github.com/tonibergholm/digilompakko/issues/10)  
+**Status:** ✅ Fixed — PR [#22](https://github.com/tonibergholm/digilompakko/pull/22). Sessions atomically consumed before verification; 5-minute TTL; replay and race-condition adversarial tests added.
 
 ---
 
@@ -80,7 +102,8 @@ presentation request.
 `vct`/doctype, required claim set, trusted authority, expected values). Bind mdoc `docType` and
 DeviceAuthentication fields to the signed MSO and the request.
 
-**GitHub issue:** [#11](https://github.com/tonibergholm/digilompakko/issues/11)
+**GitHub issue:** [#11](https://github.com/tonibergholm/digilompakko/issues/11)  
+**Status:** ✅ Fixed — PR [#23](https://github.com/tonibergholm/digilompakko/pull/23). `vp_token` validated against stored DCQL query (format, `vct`/doctype, required claims); mdoc `docType` bound to MSO.
 
 ---
 
@@ -106,7 +129,8 @@ HAIP 1.0 became Final on 24 December 2025. Mandatory controls absent from this i
 **Remediation:** Change compliance tables from ✅ to 🔴/⬜ for absent mandatory controls until
 external conformance runs pass; pin exact spec versions; maintain a MUST-level matrix.
 
-**GitHub issue:** [#12](https://github.com/tonibergholm/digilompakko/issues/12)
+**GitHub issue:** [#12](https://github.com/tonibergholm/digilompakko/issues/12)  
+**Status:** ✅ Fixed (documentation) — PR [#20](https://github.com/tonibergholm/digilompakko/pull/20). Compliance tables corrected from ✅ to 🔴/⬜ for all absent MUST-level controls; MUST-level matrix added. The controls themselves remain absent (architectural gaps tracked in `ROADMAP.md`).
 
 ---
 
@@ -126,7 +150,8 @@ or stall/exhaust the process.
 allow-list origins; reject private/link-local addresses and redirects to them; enforce timeouts,
 size limits, expected status codes, and media types.
 
-**GitHub issue:** [#13](https://github.com/tonibergholm/digilompakko/issues/13)
+**GitHub issue:** [#13](https://github.com/tonibergholm/digilompakko/issues/13)  
+**Status:** ✅ Fixed — PR [#24](https://github.com/tonibergholm/digilompakko/pull/24). `assertSafeUrl` (HTTPS required; HTTP only to loopback) and `safeFetch` (5 s timeout, 1 MiB cap) added to `packages/core`; all outbound fetches in wallet and verifier routed through them.
 
 ---
 
@@ -144,7 +169,8 @@ clients can grow server memory indefinitely.
 **Remediation:** Store issuance/expiry timestamps and enforce them atomically; bind auth codes to
 `client_id` + redirect URI; cap state maps; periodically remove expired records.
 
-**GitHub issue:** [#14](https://github.com/tonibergholm/digilompakko/issues/14)
+**GitHub issue:** [#14](https://github.com/tonibergholm/digilompakko/issues/14)  
+**Status:** ✅ Fixed — PR [#25](https://github.com/tonibergholm/digilompakko/pull/25). PAR, auth-code, access-token, and c_nonce TTLs stored and enforced server-side; `c_nonce_expires_in: 300` advertised.
 
 ---
 
@@ -162,7 +188,8 @@ trigger resource exhaustion via a crafted status list.
 **Remediation:** Pass expected issuer and URI into verification, validate all claims and index
 types, impose compressed/decompressed size limits.
 
-**GitHub issue:** [#15](https://github.com/tonibergholm/digilompakko/issues/15)
+**GitHub issue:** [#15](https://github.com/tonibergholm/digilompakko/issues/15)  
+**Status:** ✅ Fixed — PR [#26](https://github.com/tonibergholm/digilompakko/pull/26). `readStatus()` now validates `iss` against expected issuer, `sub` against expected URI, and `bits === 1`; adversarial tests for wrong-issuer and wrong-URI added.
 
 ---
 
@@ -183,7 +210,8 @@ increasing linkability.
 **Remediation:** Add full JOSE/request claim validation; require per-operation user authorization;
 add hardware/key attestation; consider per-credential or batch single-use keys.
 
-**GitHub issue:** [#16](https://github.com/tonibergholm/digilompakko/issues/16)
+**GitHub issue:** [#16](https://github.com/tonibergholm/digilompakko/issues/16)  
+**Status:** ✅ Fixed — PR [#27](https://github.com/tonibergholm/digilompakko/pull/27). `verifyRequestObject()` added to iOS (`Jose.swift`) and Android (`Jose.kt`) validating `alg`/`typ`/`exp`/`aud`; Secure Enclave `.userPresence` and Android `setUserAuthenticationRequired(true)` with 30 s window added.
 
 ---
 
@@ -201,7 +229,8 @@ transit on any non-loopback network.
 loopback interface; require TLS for all non-loopback traffic; remove the broad ATS exception and
 use a narrow debug-only exception.
 
-**GitHub issue:** [#17](https://github.com/tonibergholm/digilompakko/issues/17)
+**GitHub issue:** [#17](https://github.com/tonibergholm/digilompakko/issues/17)  
+**Status:** ✅ Fixed — PR [#28](https://github.com/tonibergholm/digilompakko/pull/28). `NSAllowsArbitraryLoads` removed from `Info.plist`; replaced with narrow `NSExceptionDomains` scoped to `localhost` only.
 
 ---
 
@@ -216,7 +245,8 @@ Unexpected exception messages (including internal state) are forwarded directly 
 **Remediation:** Return stable, public error codes/messages to clients; log sanitized diagnostic
 detail server-side only.
 
-**GitHub issue:** [#18](https://github.com/tonibergholm/digilompakko/issues/18)
+**GitHub issue:** [#18](https://github.com/tonibergholm/digilompakko/issues/18)  
+**Status:** ✅ Fixed — PR [#30](https://github.com/tonibergholm/digilompakko/pull/30). Non-`Oid4vcError` exceptions in `sendError` now log server-side and return `"an internal error occurred"` to clients.
 
 ---
 
@@ -234,7 +264,8 @@ issues.
 **Remediation:** Add read-only workflow permissions, dependency review, CodeQL, secret scanning,
 SBOM/provenance, mobile CI, and recorded conformance-suite runs.
 
-**GitHub issue:** [#19](https://github.com/tonibergholm/digilompakko/issues/19)
+**GitHub issue:** [#19](https://github.com/tonibergholm/digilompakko/issues/19)  
+**Status:** ✅ Fixed — PR [#29](https://github.com/tonibergholm/digilompakko/pull/29). Action SHAs pinned (`actions/checkout` v4.2.2, `actions/setup-node` v4.2.0); `permissions: contents: read` added; `npm audit --audit-level=high` step added.
 
 ---
 

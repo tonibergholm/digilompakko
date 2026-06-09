@@ -33,8 +33,9 @@ Status legend: ✅ done in demo · 🟡 partial · ⬜ planned
   never leave the store; credential APIs sign via the keystore
 - ✅ Authorization Code flow + PAR (RFC 9126) + PKCE (RFC 7636), alongside pre-auth
 - ✅ Relying Party registration + attribute-entitlement gate (`RelyingPartyRegistry`)
-- ✅ OpenID4VP signed request objects (JAR, RFC 9101) — verifier signs the Authorization Request,
-  wallet verifies the RP signature (via `/jwks.json`) before disclosing anything
+- ✅ OpenID4VP signed request objects (JAR, RFC 9101) — verifier signs the Authorization Request;
+  wallet validates `alg`/`typ`/`exp`/`aud` and verifies the RP signature before disclosing anything
+  (HIGH-1 fixed, PR [#21](https://github.com/tonibergholm/digilompakko/pull/21))
 - 🟡 Access certificates (X.509 + Trusted List) for RPs — registry models the gate; certs are future
 - ⬜ Hardware-backed WSCD implementation (secure element / TEE / HSM)
 - ⬜ Proximity flows (ISO 18013-5 BLE/NFC device retrieval) and online (ISO 18013-7) — require
@@ -53,5 +54,8 @@ Status legend: ✅ done in demo · 🟡 partial · ⬜ planned
 - ✅ Android (Kotlin/Compose): StrongBox/TEE holder key, SD-JWT VC issue + present, Compose UI
 - ⬜ mdoc / mDL (`mso_mdoc`) on native (CBOR/COSE in Swift + Kotlin)
 - ⬜ Authorization Code + PAR + PKCE on native; mdoc revocation display
-- ⬜ Hardware key attestation; biometric gating of signing
+- 🟡 Biometric gating of signing key: Secure Enclave `.userPresence` (iOS) and
+  `setUserAuthenticationRequired(true)` (Android) require Face ID/Touch ID on device
+  (MEDIUM-4 fixed, PR [#27](https://github.com/tonibergholm/digilompakko/pull/27))
+- ⬜ Hardware key attestation (Secure Enclave / StrongBox key attestation certificate chain)
 - ⬜ Proximity presentation (BLE/NFC, ISO 18013-5/-7)
