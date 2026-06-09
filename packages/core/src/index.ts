@@ -9,3 +9,4 @@ export * from "./keystore.js";
 export * from "./pkce.js";
 export * from "./rp-registry.js";
 export * from "./request-object.js";
+export * from "./http.js";
