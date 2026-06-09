@@ -3,22 +3,31 @@
  *
  * Keys live in a `SoftwareKeyStore` (the WSCD boundary abstraction) — the wallet never handles
  * raw private key material, it asks the keystore to sign. Credentials are in-memory for the demo.
+ * Supports both credential formats: SD-JWT VC (`dc+sd-jwt`) and ISO 18013-5 mdoc (`mso_mdoc`).
  */
 import {
   SoftwareKeyStore,
   createPresentation,
+  createMdocPresentation,
+  verifyRequestObject,
   peekPayload,
   pkceS256Challenge,
   ALG,
   type JWK,
   type CredentialOffer,
-  type PresentationRequest,
 } from "@digilompakko/core";
 import { randomUUID } from "node:crypto";
 
+const MDL_CONFIG_ID = "org.iso.18013.5.1.mDL";
+
 export interface StoredCredential {
-  sdJwt: string;
-  vct: string;
+  format: "dc+sd-jwt" | "mso_mdoc";
+  /** SD-JWT VC compact string (format dc+sd-jwt). */
+  sdJwt?: string;
+  vct?: string;
+  /** base64url(CBOR(IssuerSigned)) (format mso_mdoc). */
+  mdoc?: string;
+  docType?: string;
 }
 
 export class Wallet {
@@ -33,21 +42,19 @@ export class Wallet {
     this.publicJwk = publicJwk;
   }
 
-  /** OpenID4VCI pre-authorized code flow. */
+  /** OpenID4VCI pre-authorized code flow. Format is derived from the offer. */
   async acceptOffer(offer: CredentialOffer): Promise<StoredCredential> {
     const issuer = offer.credential_issuer;
+    const configId = offer.credential_configuration_ids[0];
     const preAuth = offer.grants["urn:ietf:params:oauth:grant-type:pre-authorized_code"]["pre-authorized_code"];
     const token = (await this.postJson(`${issuer}/token`, {
       grant_type: "urn:ietf:params:oauth:grant-type:pre-authorized_code",
       "pre-authorized_code": preAuth,
     })) as TokenResponse;
-    return this.fetchCredential(issuer, token);
+    return this.fetchCredential(issuer, token, this.formatFor(configId));
   }
 
-  /**
-   * OpenID4VCI Authorization Code flow with PAR (RFC 9126) + PKCE (RFC 7636).
-   * Demonstrates the higher-assurance issuance path the ARF expects for PID.
-   */
+  /** OpenID4VCI Authorization Code flow with PAR (RFC 9126) + PKCE (RFC 7636). PID only here. */
   async acceptViaAuthCode(issuer: string, clientId = "digilompakko-wallet"): Promise<StoredCredential> {
     const codeVerifier = randomUUID() + randomUUID();
     const codeChallenge = pkceS256Challenge(codeVerifier);
@@ -68,11 +75,15 @@ export class Wallet {
       client_id: clientId,
     })) as TokenResponse;
 
-    return this.fetchCredential(issuer, token);
+    return this.fetchCredential(issuer, token, "dc+sd-jwt");
+  }
+
+  private formatFor(configId: string): "dc+sd-jwt" | "mso_mdoc" {
+    return configId === MDL_CONFIG_ID ? "mso_mdoc" : "dc+sd-jwt";
   }
 
   /** Shared: build the holder Proof-of-Possession and call the credential endpoint. */
-  private async fetchCredential(issuer: string, token: TokenResponse): Promise<StoredCredential> {
+  private async fetchCredential(issuer: string, token: TokenResponse, format: "dc+sd-jwt" | "mso_mdoc"): Promise<StoredCredential> {
     const signer = this.keyStore.getSigner(this.keyId);
     const proofJwt = await signer.signJwt(
       { alg: ALG, typ: "openid4vci-proof+jwt", jwk: this.publicJwk },
@@ -82,44 +93,76 @@ export class Wallet {
     const credRes = await fetch(`${issuer}/credential`, {
       method: "POST",
       headers: { "content-type": "application/json", authorization: `Bearer ${token.access_token}` },
-      body: JSON.stringify({ format: "dc+sd-jwt", proof: { proof_type: "jwt", jwt: proofJwt } }),
+      body: JSON.stringify({ format, proof: { proof_type: "jwt", jwt: proofJwt } }),
     });
-    const { credential } = (await credRes.json()) as { credential?: string };
-    if (!credential) throw new Error("issuer returned no credential");
+    const data = (await credRes.json()) as { credential?: string; format?: string; doctype?: string };
+    if (!data.credential) throw new Error("issuer returned no credential");
 
-    const stored: StoredCredential = { sdJwt: credential, vct: peekPayload(credential).vct as string };
+    const stored: StoredCredential =
+      data.format === "mso_mdoc"
+        ? { format: "mso_mdoc", mdoc: data.credential, docType: data.doctype }
+        : { format: "dc+sd-jwt", sdJwt: data.credential, vct: peekPayload(data.credential).vct as string };
     this.credentials.push(stored);
     return stored;
   }
 
   /** OpenID4VP: fetch the request, build a presentation (signed via the keystore), post the vp_token. */
   async present(requestUri: string, revealOverride?: string[]): Promise<{ requestId: string; result: unknown }> {
-    const request = (await (await fetch(requestUri)).json()) as PresentationRequest;
+    const request = await this.resolveRequest(requestUri);
+    const vpToken =
+      request.format === "mso_mdoc"
+        ? await this.buildMdocPresentation(request, revealOverride)
+        : await this.buildSdJwtPresentation(request, revealOverride);
 
+    const postRes = await fetch(request.response_uri, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ vp_token: vpToken }),
+    });
+    const result = await postRes.json();
+    const requestId = new URL(request.response_uri).searchParams.get("id") ?? "";
+    return { requestId, result };
+  }
+
+  /**
+   * Fetch the verifier's request. If it's a signed request object (JAR), verify the RP's
+   * signature against its published JWKS before trusting any of its contents.
+   */
+  private async resolveRequest(requestUri: string): Promise<PresentationRequestObject> {
+    const raw = (await (await fetch(requestUri)).json()) as { request?: string } & PresentationRequestObject;
+    if (!raw.request) return raw; // unsigned (legacy) — accept for backward compatibility
+    const clientId = peekPayload(raw.request).client_id as string;
+    const jwks = (await (await fetch(`${clientId}/jwks.json`)).json()) as { keys: JWK[] };
+    return (await verifyRequestObject(raw.request, jwks.keys[0])) as unknown as PresentationRequestObject;
+  }
+
+  private async buildSdJwtPresentation(request: PresentationRequestObject, revealOverride?: string[]): Promise<string> {
     const wanted = request.dcql_query.credentials[0];
-    const cred = this.credentials.find((c) => wanted.meta.vct_values.includes(c.vct));
-    if (!cred) throw new Error(`no stored credential matches ${wanted.meta.vct_values.join(",")}`);
+    const cred = this.credentials.find((c) => c.format === "dc+sd-jwt" && wanted.meta.vct_values?.includes(c.vct!));
+    if (!cred?.sdJwt) throw new Error("no matching SD-JWT VC credential stored");
+    const toReveal = revealOverride ?? wanted.claims.map((c) => c.path[c.path.length - 1]);
+    return createPresentation(cred.sdJwt, this.keyStore.getSigner(this.keyId), toReveal, request.client_id, request.nonce);
+  }
 
-    const requested = wanted.claims.map((c) => c.path[0]);
-    const toReveal = revealOverride ?? requested;
+  private async buildMdocPresentation(request: PresentationRequestObject, revealOverride?: string[]): Promise<string> {
+    const wanted = request.dcql_query.credentials[0];
+    const cred = this.credentials.find((c) => c.format === "mso_mdoc" && c.docType === wanted.meta.doctype_value);
+    if (!cred?.mdoc || !cred.docType) throw new Error("no matching mdoc credential stored");
 
-    const presentation = await createPresentation(
-      cred.sdJwt,
-      this.keyStore.getSigner(this.keyId), // signs inside the keystore (WSCD)
-      toReveal,
+    // DCQL mdoc claim paths are [namespace, element]. Group requested elements per namespace.
+    const reveal: Record<string, string[]> = {};
+    for (const c of wanted.claims) {
+      const [ns, element] = c.path;
+      if (revealOverride && !revealOverride.includes(element)) continue;
+      (reveal[ns] ??= []).push(element);
+    }
+    return createMdocPresentation(
+      { docType: cred.docType, issuerSigned: cred.mdoc },
+      this.keyStore.getSigner(this.keyId),
+      reveal,
       request.client_id,
       request.nonce,
     );
-
-    const responseUri = request.response_uri;
-    const postRes = await fetch(responseUri, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ vp_token: presentation }),
-    });
-    const result = await postRes.json();
-    const requestId = new URL(responseUri).searchParams.get("id") ?? "";
-    return { requestId, result };
   }
 
   private async postJson(url: string, body: unknown): Promise<unknown> {
@@ -139,4 +182,20 @@ export class Wallet {
 interface TokenResponse {
   access_token: string;
   c_nonce: string;
+}
+
+/** The verifier's request object (covers both SD-JWT VC and mdoc DCQL shapes). */
+interface PresentationRequestObject {
+  client_id: string;
+  nonce: string;
+  response_uri: string;
+  format?: "dc+sd-jwt" | "mso_mdoc";
+  dcql_query: {
+    credentials: Array<{
+      id: string;
+      format: string;
+      meta: { vct_values?: string[]; doctype_value?: string };
+      claims: Array<{ path: string[] }>;
+    }>;
+  };
 }

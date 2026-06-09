@@ -125,6 +125,8 @@ holder binding, replay protection, and minimal disclosure.
 | Credential expiry enforcement | `core/src/sd-jwt.ts` (`exp`) | ✅ demo |
 | ISO 18013-5 mdoc / mDL (`mso_mdoc`, CBOR/COSE_Sign1) | `core/src/mdoc.ts`; issuer advertises `mso_mdoc` | ✅ demo (subset) |
 | mdoc device binding (deviceAuth over nonce) | `core/src/mdoc.ts` | ✅ demo |
+| mdoc revocation (status in MSO → Token Status List) | `core/src/mdoc.ts`; issuer + verifier | ✅ demo |
+| OpenID4VP signed request objects (JAR, RFC 9101) | `core/src/request-object.ts`; verifier `/jwks.json` | ✅ demo |
 | WSCD key-storage boundary (keys never exported) | `core/src/keystore.ts` (`WalletKeyStore`, `JwsSigner`) | ✅ demo (software) |
 | Authorization Code + PAR + PKCE issuance | issuer `/par`, `/authorize`, `/token`; `core/src/pkce.ts` | ✅ demo |
 | Relying Party registration + entitlement gate | `core/src/rp-registry.ts`; verifier `/rp/:id` | ✅ demo |

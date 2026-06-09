@@ -14,9 +14,12 @@
 import express from "express";
 import { randomUUID } from "node:crypto";
 import {
+  generateP256KeyPair,
   verifyPresentation,
+  verifyMdocPresentation,
   peekPayload,
   readStatus,
+  signRequestObject,
   StaticTrustResolver,
   RelyingPartyRegistry,
   STATUS_INVALID,
@@ -34,6 +37,10 @@ const app = express();
 app.use(express.json());
 
 const trust = new StaticTrustResolver(TRUSTED);
+
+// Verifier (RP) signing key for signed request objects (JAR). Published at /jwks.json so the
+// wallet can verify the request genuinely came from this RP before disclosing anything.
+const verifierKeys = await generateP256KeyPair();
 
 // This verifier registers itself as a Relying Party, declaring exactly which attributes it is
 // entitled to request. The registry gate (assertEntitled) enforces data minimisation: the RP
@@ -53,8 +60,30 @@ const DCQL: DcqlQuery = {
   ],
 };
 
-interface Session { nonce: string; result?: unknown }
+// mdoc (mso_mdoc) DCQL: claims are namespace-qualified per ISO 18013-5.
+const MDL_DOCTYPE = "org.iso.18013.5.1.mDL";
+const MDL_NAMESPACE = "org.iso.18013.5.1";
+const DCQL_MDL = {
+  credentials: [
+    {
+      id: "mdl",
+      format: "mso_mdoc",
+      meta: { doctype_value: MDL_DOCTYPE },
+      claims: [
+        { path: [MDL_NAMESPACE, "given_name"] },
+        { path: [MDL_NAMESPACE, "family_name"] },
+        { path: [MDL_NAMESPACE, "age_over_18"] },
+      ],
+    },
+  ],
+};
+
+type Format = "dc+sd-jwt" | "mso_mdoc";
+interface Session { nonce: string; format: Format; result?: unknown }
 const sessions = new Map<string, Session>();
+
+// Verifier (RP) public key — the wallet verifies signed request objects against this.
+app.get("/jwks.json", (_req, res) => res.json({ keys: [verifierKeys.publicJwk] }));
 
 // RP registration lookup (a wallet can check the verifier is a registered RP).
 app.get("/rp/:clientId", (req, res) => {
@@ -63,30 +92,35 @@ app.get("/rp/:clientId", (req, res) => {
   res.json(rp);
 });
 
-app.post("/presentation/request", (_req, res) => {
+app.post("/presentation/request", (req, res) => {
   try {
     // Data-minimisation gate: refuse to build a request for attributes we are not entitled to.
     rpRegistry.assertEntitled(VERIFIER_URL, REQUESTED_ATTRS);
+    const format: Format = req.query.format === "mso_mdoc" ? "mso_mdoc" : "dc+sd-jwt";
     const id = randomUUID();
     const nonce = randomUUID();
-    sessions.set(id, { nonce });
+    sessions.set(id, { nonce, format });
     res.json({ request_id: id, request_uri: `${VERIFIER_URL}/presentation/request/${id}` });
   } catch (e) {
     sendError(res, e);
   }
 });
 
-app.get("/presentation/request/:id", (req, res) => {
+app.get("/presentation/request/:id", async (req, res) => {
   const session = sessions.get(req.params.id);
   if (!session) return res.status(404).json({ error: "unknown request" });
-  res.json({
+  const requestObject = {
     client_id: VERIFIER_URL,
     nonce: session.nonce,
     response_type: "vp_token",
     response_mode: "direct_post",
     response_uri: `${VERIFIER_URL}/presentation/response?id=${req.params.id}`,
-    dcql_query: DCQL,
-  });
+    format: session.format,
+    dcql_query: session.format === "mso_mdoc" ? DCQL_MDL : DCQL,
+  };
+  // Signed request object (JAR): the wallet verifies our signature before responding.
+  const request = await signRequestObject(verifierKeys.privateJwk, requestObject);
+  res.json({ request });
 });
 
 app.post("/presentation/response", async (req, res) => {
@@ -98,6 +132,26 @@ app.post("/presentation/response", async (req, res) => {
     const vpToken: string | undefined = req.body?.vp_token;
     if (!vpToken) throw new Oid4vcError("invalid_presentation", "missing vp_token");
 
+    // --- mdoc (mso_mdoc) path: the DeviceResponse carries no issuer URL, so we resolve the
+    //     issuer key from our trusted issuer's metadata. (A full 18013-5 flow uses the issuerAuth
+    //     x5chain instead.) No Token Status List in this mdoc subset — see ROADMAP.
+    if (session.format === "mso_mdoc") {
+      const issuerKey = await trust.resolveIssuerKey(TRUSTED[0]);
+      const mResult = await verifyMdocPresentation(vpToken, issuerKey, VERIFIER_URL, session.nonce);
+      // Revocation: if the MSO carries a status reference, check the Token Status List.
+      if (mResult.valid && mResult.status) {
+        const token = await fetch(mResult.status.uri).then((r) => r.text());
+        const status = await readStatus(token, mResult.status.idx, issuerKey);
+        if (status === STATUS_INVALID) {
+          mResult.valid = false;
+          mResult.errors.push("credential_revoked");
+        }
+      }
+      session.result = mResult;
+      return res.json(mResult);
+    }
+
+    // --- SD-JWT VC path ---
     // 1. Resolve trust: is the issuer on our trusted list? Get its signing key.
     const issuer = peekPayload(vpToken).iss as string;
     const issuerKey = await trust.resolveIssuerKey(issuer);

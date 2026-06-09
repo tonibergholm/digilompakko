@@ -6,6 +6,23 @@ All notable changes to this project are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Added — mdoc revocation + OpenID4VP signed request objects
+- **mdoc revocation**: `issueMdoc` embeds a Token Status List reference in the MSO; the issuer
+  assigns mDLs a status index; `verifyMdocPresentation` surfaces it; the verifier fetches the status
+  list and rejects revoked mDLs (parity with PID). (`core/src/mdoc.ts`)
+- **OpenID4VP signed request objects (JAR, RFC 9101)**: `core/src/request-object.ts`
+  (`signRequestObject`/`verifyRequestObject`); the verifier signs its Authorization Request and
+  publishes its key at `/jwks.json`; the wallet verifies the RP signature before responding.
+- Tests for mdoc status surfacing and JAR sign/verify (incl. forged-key and tamper rejection).
+
+### Added — mdoc/mDL over the HTTP layer
+- Issuer issues `mso_mdoc` end-to-end: `/offer` accepts a `credential_configuration_id`, and the
+  credential endpoint issues an mdoc bound to the holder's device key when the mDL is requested.
+- Verifier supports an `mso_mdoc` presentation request (`/presentation/request?format=mso_mdoc`)
+  with mdoc DCQL and verifies the mdoc `vp_token` (issuer key resolved from the trusted issuer).
+- Wallet stores and presents both formats; the UI exposes mDL get/present. PID (SD-JWT) unchanged.
+- Documented: this mdoc subset has no Token Status List revocation yet (PID does).
+
 ### Added — Phase 4: conformance documentation
 - **Requirement traceability matrix** (`docs/TRACEABILITY.md`): capability → spec → code → test
   across formats, issuance, presentation, trust/revocation/keys, RP governance, and crypto.

@@ -23,7 +23,9 @@ Status legend: ✅ done in demo · 🟡 partial · ⬜ planned
 - ✅ ISO/IEC 18013-5 mdoc / mDL issuance & verification (`mso_mdoc`), subset
 - ✅ CBOR/COSE_Sign1 support in `core` (`mdoc.ts`), ES256 device binding
 - ✅ Format negotiation in issuer metadata (advertises `dc+sd-jwt` and `mso_mdoc`)
-- 🟡 mdoc over OpenID4VCI/VP HTTP wire (core + headless demo done; full HTTP wiring TODO)
+- ✅ mdoc over OpenID4VCI/VP HTTP wire (issuer issues `mso_mdoc`, verifier verifies mdoc `vp_token`,
+  wallet stores + presents both formats; UI exposes mDL get/present)
+- ✅ mdoc revocation — Token Status List reference embedded in the MSO; verifier rejects revoked mDLs
 - ⬜ Full 18013-5 SessionTranscript + `deviceMac` variant
 
 ## Phase 3 — Real-world hardening
@@ -31,6 +33,8 @@ Status legend: ✅ done in demo · 🟡 partial · ⬜ planned
   never leave the store; credential APIs sign via the keystore
 - ✅ Authorization Code flow + PAR (RFC 9126) + PKCE (RFC 7636), alongside pre-auth
 - ✅ Relying Party registration + attribute-entitlement gate (`RelyingPartyRegistry`)
+- ✅ OpenID4VP signed request objects (JAR, RFC 9101) — verifier signs the Authorization Request,
+  wallet verifies the RP signature (via `/jwks.json`) before disclosing anything
 - 🟡 Access certificates (X.509 + Trusted List) for RPs — registry models the gate; certs are future
 - ⬜ Hardware-backed WSCD implementation (secure element / TEE / HSM)
 - ⬜ Proximity flows (ISO 18013-5 BLE/NFC device retrieval) and online (ISO 18013-7) — require

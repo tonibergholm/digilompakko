@@ -8,3 +8,4 @@ export * from "./mdoc.js";
 export * from "./keystore.js";
 export * from "./pkce.js";
 export * from "./rp-registry.js";
+export * from "./request-object.js";
