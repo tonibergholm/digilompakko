@@ -127,7 +127,7 @@ function sweepIssuer(): void {
     if (now - (v.createdAt ?? 0) > AUTH_CODE_TTL_MS) authCodes.delete(k);
   }
   for (const [k, v] of accessTokens) {
-    if (now - (v.issuedAt ?? 0) > 300_000) accessTokens.delete(k);
+    if (now - (v.issuedAt ?? 0) > ACCESS_TOKEN_TTL_MS) accessTokens.delete(k);
   }
 }
 setInterval(sweepIssuer, 60_000).unref();
