@@ -48,7 +48,7 @@ test("PKCE S256: matching verifier passes, wrong verifier fails", () => {
   const verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
   const challenge = pkceS256Challenge(verifier);
   assert.doesNotThrow(() => verifyPkce(verifier, challenge));
-  assert.throws(() => verifyPkce("wrong-verifier", challenge), /PKCE verification failed/);
+  assert.throws(() => verifyPkce("wrong-verifier", challenge), /PKCE code_verifier mismatch/);
   assert.throws(() => verifyPkce(verifier, challenge, "plain"), /unsupported PKCE method/);
 });
 
