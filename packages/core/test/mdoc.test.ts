@@ -65,8 +65,8 @@ test("mdoc: device binding — different holder key rejected", async () => {
 
 test("mdoc: CBOR larger than MAX_CBOR_BYTES is rejected before decode", async () => {
   const s = await setup();
-  // 2 MiB of zeroes base64url-encoded — too large to be a real DeviceResponse
-  const huge = Buffer.alloc(2 * 1024 * 1024).toString("base64url");
+  // one byte over the limit — too large to be a real DeviceResponse
+  const huge = Buffer.alloc(MAX_CBOR_BYTES + 1).toString("base64url");
   await assert.rejects(
     () => verifyMdocPresentation(huge, s.issuerPublicJwk, AUD, s.nonce),
     /too large/i,
