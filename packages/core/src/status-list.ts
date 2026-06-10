@@ -109,6 +109,8 @@ export async function readStatus(
       typ: "statuslist+jwt",
       // draft-ietf-oauth-status-list §5.1: `iss` MUST match the credential issuer.
       issuer: opts.expectedIssuer,
+      // HAIP §2.1: only ES256 is permitted.
+      algorithms: ["ES256"],
     }) as { payload: Record<string, unknown> });
   } catch (e) {
     throw new Oid4vcError("status_unavailable", `status list token invalid: ${(e as Error).message}`);
@@ -129,6 +131,12 @@ export async function readStatus(
   // different encoding and reading it with 1-bit arithmetic would silently return wrong results.
   if (sl.bits !== 1) {
     throw new Oid4vcError("status_unavailable", `unsupported status_list bits value: ${sl.bits} (expected 1)`);
+  }
+
+  // Guard against negative index before any bit arithmetic — a negative idx would produce a
+  // negative byte offset and silently read the wrong bit (or wrap in JS bitwise operations).
+  if (idx < 0) {
+    throw new Oid4vcError("invalid_request", `negative status index: ${idx}`);
   }
 
   const bytes = StatusList.decodeBytes(sl.lst);

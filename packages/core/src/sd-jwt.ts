@@ -131,10 +131,21 @@ export async function verifyPresentation(
     const { jws, disclosures, kbJwt } = parseCompact(presentation);
 
     // 1. Verify the issuer's signature over the SD-JWT.
+    // HAIP §2.1: only ES256 (P-256) is permitted.
     const issuerKey = await importJWK(issuerPublicJwk, ALG);
-    const { payload } = await jwtVerify(jws, issuerKey, { typ: SD_JWT_VC_TYP });
+    const { payload } = await jwtVerify(jws, issuerKey, { typ: SD_JWT_VC_TYP, algorithms: ["ES256"] });
     issuer = payload.iss as string;
     vct = payload.vct as string;
+
+    // SD-JWT VC §4.2.2: honour `nbf` — credential must not be used before its validity start.
+    if (typeof payload.nbf === "number" && payload.nbf > Math.floor(Date.now() / 1000)) {
+      errors.push("Credential not yet valid (nbf)");
+    }
+
+    // SD-JWT VC §4.2: only sha-256 is allowed for selective disclosure hashes.
+    if (payload._sd_alg && payload._sd_alg !== "sha-256") {
+      errors.push(`unsupported _sd_alg: ${String(payload._sd_alg)}`);
+    }
 
     // Expose always-visible issuer claims (excluding SD-JWT internals) to the caller.
     for (const [k, v] of Object.entries(payload)) {
@@ -161,7 +172,15 @@ export async function verifyPresentation(
       errors.push("Credential has no cnf.jwk; cannot verify holder binding.");
     } else {
       const holderKey = await importJWK(cnf.jwk, ALG);
-      const { payload: kb } = await jwtVerify(kbJwt, holderKey, { typ: "kb+jwt" });
+      // HAIP §2.1: only ES256 is permitted for the KB-JWT.
+      const { payload: kb } = await jwtVerify(kbJwt, holderKey, { typ: "kb+jwt", algorithms: ["ES256"] });
+
+      // SD-JWT §7.3: KB-JWT must be fresh — a stale KB-JWT indicates a replay attempt.
+      const KB_JWT_MAX_AGE_S = 300;
+      const now = Math.floor(Date.now() / 1000);
+      if (typeof kb.iat !== "number" || now - kb.iat > KB_JWT_MAX_AGE_S) {
+        errors.push("KB-JWT too old (replay risk)");
+      }
 
       if (kb.aud !== expectedAudience) errors.push(`KB-JWT audience mismatch: ${kb.aud}`);
       if (kb.nonce !== expectedNonce) errors.push("KB-JWT nonce mismatch (possible replay).");

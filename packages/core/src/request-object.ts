@@ -27,11 +27,18 @@ export async function signRequestObject(privateJwk: JWK, claims: Record<string, 
     .sign(key);
 }
 
-/** Wallet side: verify a signed request object and return its claims. Throws on bad signature. */
+/**
+ * Wallet side: verify a signed request object and return its claims. Throws on bad signature.
+ *
+ * @internal Use verifyPresentationRequest for full high-assurance verification. This function
+ *           performs only a signature check without aud/allowlist binding and is therefore
+ *           NOT sufficient for production use.
+ */
 export async function verifyRequestObject(jwt: string, publicJwk: JWK): Promise<Record<string, unknown>> {
   const key = await importJWK(publicJwk, ALG);
   try {
-    const { payload } = await jwtVerify(jwt, key, { typ: REQUEST_OBJECT_TYP });
+    // HAIP §2.1: only ES256 is permitted.
+    const { payload } = await jwtVerify(jwt, key, { typ: REQUEST_OBJECT_TYP, algorithms: ["ES256"] });
     return payload as Record<string, unknown>;
   } catch (e) {
     throw new Oid4vcError("invalid_request", `request object signature invalid: ${(e as Error).message}`);
@@ -80,9 +87,11 @@ export async function verifyPresentationRequest(
   }
   const key = await importJWK(rpJwk, ALG);
 
-  const verifyOpts: { typ: string; audience: string; currentDate?: Date } = {
+  const verifyOpts: { typ: string; audience: string; algorithms: string[]; currentDate?: Date } = {
     typ: REQUEST_OBJECT_TYP,
     audience: opts.expectedAudience,
+    // HAIP §2.1: only ES256 is permitted.
+    algorithms: ["ES256"],
   };
   if (opts.now !== undefined) {
     verifyOpts.currentDate = new Date(opts.now * 1000);
