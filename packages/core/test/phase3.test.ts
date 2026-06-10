@@ -23,7 +23,7 @@ test("SoftwareKeyStore: signs a verifiable JWT and never exposes the private key
   assert.equal(payload.hello, "world");
 
   // The signer interface exposes only the public key — no private material.
-  assert.equal((signer as Record<string, unknown>).privateJwk, undefined);
+  assert.equal((signer as unknown as Record<string, unknown>).privateJwk, undefined);
   assert.equal(publicJwk.d, undefined);
 });
 
