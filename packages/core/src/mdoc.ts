@@ -25,6 +25,20 @@ const cbor = new Encoder({ mapsAsObjects: false, useRecords: false, tagUint8Arra
 const enc = (v: unknown): Buffer => cbor.encode(v) as Buffer;
 const dec = (b: Uint8Array): unknown => cbor.decode(b as Buffer);
 
+/** Maximum size of attacker-supplied CBOR input before decode (prevents memory exhaustion). */
+export const MAX_CBOR_BYTES = 1_048_576; // 1 MiB
+
+/**
+ * Safe CBOR decode: rejects input exceeding MAX_CBOR_BYTES before invoking the decoder.
+ * Use on all attacker-controlled input paths (DeviceResponse, MSO payload).
+ */
+function safeDec(b: Uint8Array): unknown {
+  if (b.byteLength > MAX_CBOR_BYTES) {
+    throw new Oid4vcError("invalid_presentation", `CBOR too large: ${b.byteLength} bytes`);
+  }
+  return dec(b);
+}
+
 /** Wrap already-encoded bytes as a CBOR tag-24 "encoded data item". */
 const tag24 = (bytes: Buffer): Tag => new Tag(bytes, 24);
 const sha256 = (b: Buffer): Buffer => createHash("sha256").update(b).digest();
@@ -227,8 +241,14 @@ export async function verifyMdocPresentation(
   let docType: string | undefined;
   let status: { idx: number; uri: string } | undefined;
 
+  // Size check before try/catch: must throw, not silently fail, to prevent memory exhaustion.
+  const rawBytes = Buffer.from(deviceResponseB64, "base64url");
+  if (rawBytes.byteLength > MAX_CBOR_BYTES) {
+    throw new Oid4vcError("invalid_presentation", `CBOR too large: ${rawBytes.byteLength} bytes`);
+  }
+
   try {
-    const resp = dec(Buffer.from(deviceResponseB64, "base64url")) as Map<string, unknown>;
+    const resp = dec(rawBytes) as Map<string, unknown>;
     const doc = (resp.get("documents") as unknown[])[0] as Map<string, unknown>;
     docType = doc.get("docType") as string;
     const issuerSigned = doc.get("issuerSigned") as Map<string, unknown>;
@@ -236,8 +256,14 @@ export async function verifyMdocPresentation(
     // 1. Verify issuerAuth and recover the MSO.
     const issuerAuth = issuerSigned.get("issuerAuth") as unknown[];
     const msoPayload = await coseSign1Verify(issuerPublicJwk, issuerAuth);
-    const msoTag = dec(msoPayload) as Tag; // tag-24 wrapping MSO bytes
-    const mso = dec(msoTag.value as Buffer) as Map<string, unknown>;
+    const msoTag = safeDec(msoPayload) as Tag; // tag-24 wrapping MSO bytes
+    const mso = safeDec(msoTag.value as Buffer) as Map<string, unknown>;
+
+    // ISO 18013-5 §9.1.2.4: docType in MSO MUST match the docType in the surrounding Document.
+    if (mso.get("docType") !== docType) {
+      errors.push("docType mismatch between Document and MSO");
+    }
+
     const valueDigests = mso.get("valueDigests") as Map<string, Map<number, Buffer>>;
 
     // 2. For each disclosed item, recompute its digest and confirm it matches the MSO.
@@ -268,9 +294,14 @@ export async function verifyMdocPresentation(
     if (transcript.get("aud") !== expectedAudience) errors.push("deviceAuth audience mismatch");
     if (transcript.get("nonce") !== expectedNonce) errors.push("deviceAuth nonce mismatch (replay)");
 
-    // 4. Validity window.
+    // 4. Validity window (ISO 18013-5 §9.1.2.4).
     const validity = mso.get("validityInfo") as Map<string, number>;
-    if (validity.get("validUntil")! < Math.floor(Date.now() / 1000)) errors.push("mdoc expired");
+    const now = Math.floor(Date.now() / 1000);
+    if (validity.get("validUntil")! < now) errors.push("mdoc expired");
+    const validFrom = validity.get("validFrom");
+    if (typeof validFrom === "number" && validFrom > now) {
+      errors.push("mdoc not yet valid (validFrom in the future)");
+    }
 
     // 5. Expose the MSO status reference (revocation is checked by the caller).
     const statusMap = mso.get("status") as Map<string, unknown> | undefined;

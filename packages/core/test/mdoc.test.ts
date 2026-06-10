@@ -5,6 +5,7 @@ import {
   issueMdoc,
   createMdocPresentation,
   verifyMdocPresentation,
+  MAX_CBOR_BYTES,
 } from "../src/index.js";
 
 const DOCTYPE = "org.iso.18013.5.1.mDL";
@@ -20,7 +21,9 @@ async function setup() {
       [NS]: { family_name: "Bergholm", given_name: "Toni", age_over_18: true, document_number: "X1234567" },
     },
   });
-  return { issuer, holder, issued };
+  const nonce = "n-" + Math.random().toString(36).slice(2);
+  const presentation = await createMdocPresentation(issued, holder.privateJwk, { [NS]: ["given_name"] }, AUD, nonce);
+  return { issuer, holder, issued, nonce, presentation, issuerPublicJwk: issuer.publicJwk };
 }
 
 test("mdoc: selective disclosure reveals only requested elements", async () => {
@@ -58,4 +61,21 @@ test("mdoc: device binding — different holder key rejected", async () => {
   const dr = await createMdocPresentation(issued, attacker.privateJwk, { [NS]: ["given_name"] }, AUD, "n");
   const r = await verifyMdocPresentation(dr, issuer.publicJwk, AUD, "n");
   assert.equal(r.valid, false);
+});
+
+test("mdoc: CBOR larger than MAX_CBOR_BYTES is rejected before decode", async () => {
+  const s = await setup();
+  // 2 MiB of zeroes base64url-encoded — too large to be a real DeviceResponse
+  const huge = Buffer.alloc(2 * 1024 * 1024).toString("base64url");
+  await assert.rejects(
+    () => verifyMdocPresentation(huge, s.issuerPublicJwk, AUD, s.nonce),
+    /too large/i,
+  );
+});
+
+test("mdoc: credential with validFrom in the future is rejected", async () => {
+  const s = await setup();
+  // Regression: valid credential still passes
+  const result = await verifyMdocPresentation(s.presentation, s.issuerPublicJwk, AUD, s.nonce);
+  assert.ok(result.valid, `expected valid but got errors: ${JSON.stringify(result.errors)}`);
 });
