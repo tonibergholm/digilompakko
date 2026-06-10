@@ -2,6 +2,7 @@
  * Headless end-to-end demo of the full issue -> hold -> present -> verify flow,
  * using only @digilompakko/core (no servers needed). Run: `npm run demo`.
  */
+import { randomUUID } from "node:crypto";
 import {
   generateP256KeyPair,
   issueSdJwtVc,
@@ -29,7 +30,7 @@ const issued = await issueSdJwtVc(issuer.privateJwk, ISSUER, holder.publicJwk, {
 console.log(`  credential length: ${issued.sdJwt.length} chars\n`);
 
 console.log("→ Verifier nonce + holder presents ONLY given_name + age_over_18…");
-const nonce = "nonce-" + Math.random().toString(36).slice(2);
+const nonce = randomUUID();
 const presentation = await createPresentation(
   issued.sdJwt, holder.privateJwk, ["given_name", "age_over_18"], VERIFIER, nonce,
 );
@@ -52,7 +53,7 @@ const mdl = await issueMdoc(issuer.privateJwk, holder.publicJwk, {
   namespaces: { [NS]: { family_name: "Bergholm", given_name: "Toni", age_over_18: true, document_number: "X1234567" } },
 });
 
-const mNonce = "mnonce-" + Math.random().toString(36).slice(2);
+const mNonce = randomUUID();
 console.log("→ Holder presents ONLY age_over_18…");
 const dr = await createMdocPresentation(mdl, holder.privateJwk, { [NS]: ["age_over_18"] }, VERIFIER, mNonce);
 const mResult = await verifyMdocPresentation(dr, issuer.publicJwk, VERIFIER, mNonce);

@@ -298,6 +298,10 @@ app.post("/credential", async (req, res) => {
     const proofJwt: string | undefined = req.body?.proof?.jwt;
     if (!proofJwt) throw new Oid4vcError("invalid_proof", "missing proof.jwt");
 
+    // Consume the access token synchronously BEFORE the first await — prevents double-spend
+    // under concurrent requests where both could pass the existence check before either deletes.
+    accessTokens.delete(accessToken);
+
     // Verify holder Proof-of-Possession (key in JWT header, bound to c_nonce + audience).
     let holderJwk: JWK;
     try {
@@ -305,7 +309,8 @@ app.post("/credential", async (req, res) => {
       holderJwk = header.jwk;
       if (!holderJwk) throw new Error("no jwk in proof header");
       const key = await importJWK(holderJwk, ALG);
-      const { payload } = await jwtVerify(proofJwt, key, { typ: "openid4vci-proof+jwt" });
+      // HAIP §2.1: only ES256 is permitted for the holder PoP proof.
+      const { payload } = await jwtVerify(proofJwt, key, { typ: "openid4vci-proof+jwt", algorithms: ["ES256"] });
       if (payload.nonce !== pending.cNonce) throw new Error("c_nonce mismatch");
       // OpenID4VCI §7.2: the c_nonce is valid only for c_nonce_expires_in seconds.
       if (Date.now() - (pending.issuedAt ?? 0) > C_NONCE_TTL_MS) throw new Error("c_nonce expired");
@@ -320,7 +325,6 @@ app.post("/credential", async (req, res) => {
       const idx = nextStatusIdx++;
       const mdoc = await issueMdoc(issuerKeys.privateJwk, holderJwk, { ...DEMO_MDL, status: { idx, uri: STATUS_URI } });
       issuedRecords.push({ idx, subject: "mDL", issuedAt: Date.now() });
-      accessTokens.delete(accessToken);
       return res.json({ credential: mdoc.issuerSigned, format: "mso_mdoc", doctype: mdoc.docType, status_index: idx });
     }
 
@@ -332,7 +336,6 @@ app.post("/credential", async (req, res) => {
 
     const issued = await issueSdJwtVc(issuerKeys.privateJwk, ISSUER_URL, holderJwk, claims);
 
-    accessTokens.delete(accessToken);
     res.json({ credential: issued.sdJwt, format: "dc+sd-jwt", status_index: idx });
   } catch (e) {
     sendError(res, e);

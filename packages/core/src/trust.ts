@@ -20,8 +20,11 @@ export interface TrustResolver {
  * from the issuer's published OpenID4VCI metadata (`/.well-known/openid-credential-issuer`).
  * Keys are cached after first resolution.
  */
+/** Cache entries expire after 5 minutes so stale keys are refreshed on rotation. */
+const TRUST_CACHE_TTL_MS = 5 * 60 * 1000;
+
 export class StaticTrustResolver implements TrustResolver {
-  private cache = new Map<string, JWK>();
+  private cache = new Map<string, { key: JWK; cachedAt: number }>();
   constructor(private readonly trustedIssuers: string[]) {}
 
   async resolveIssuerKey(issuer: string): Promise<JWK> {
@@ -29,7 +32,7 @@ export class StaticTrustResolver implements TrustResolver {
       throw new Oid4vcError("untrusted_issuer", `issuer not on trusted list: ${issuer}`, 403);
     }
     const cached = this.cache.get(issuer);
-    if (cached) return cached;
+    if (cached && Date.now() - cached.cachedAt < TRUST_CACHE_TTL_MS) return cached.key;
 
     let key: JWK | undefined;
     try {
@@ -39,7 +42,13 @@ export class StaticTrustResolver implements TrustResolver {
       throw new Oid4vcError("untrusted_issuer", `cannot fetch issuer metadata: ${(e as Error).message}`, 502);
     }
     if (!key) throw new Oid4vcError("untrusted_issuer", "issuer metadata has no JWKS key");
-    this.cache.set(issuer, key);
+
+    // HAIP §2.1: only EC P-256 keys are permitted; reject anything else before caching.
+    if (key.kty !== "EC" || key.crv !== "P-256") {
+      throw new Oid4vcError("untrusted_issuer", "issuer JWKS key must be EC P-256");
+    }
+
+    this.cache.set(issuer, { key, cachedAt: Date.now() });
     return key;
   }
 }

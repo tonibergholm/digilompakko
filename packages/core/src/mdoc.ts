@@ -87,6 +87,15 @@ async function coseSign1Raw(
 
 async function coseSign1Verify(publicJwk: JWK, sign1: unknown[]): Promise<Buffer> {
   const [protectedHdr, , payload, signature] = sign1 as [Buffer, unknown, Buffer, Buffer];
+
+  // HAIP: only ES256 (COSE alg -7) is permitted.
+  // Decode the protected header map and assert the alg parameter before any crypto operation.
+  const hdrMap = dec(protectedHdr) as Map<number, unknown>;
+  const alg = hdrMap.get(1);
+  if (alg !== -7) {
+    throw new Oid4vcError("invalid_presentation", `unsupported COSE algorithm: ${String(alg)} (expected -7 for ES256)`);
+  }
+
   const key = (await importJWK(publicJwk, "ES256")) as KeyObject;
   const ss = enc(["Signature1", protectedHdr, Buffer.alloc(0), payload]);
   const ok = nodeVerify("sha256", ss, { key, dsaEncoding: "ieee-p1363" }, signature);
