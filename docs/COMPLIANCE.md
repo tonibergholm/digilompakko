@@ -10,16 +10,15 @@ that anyone can verify *why* each component exists and *which spec clause* it sa
 this repo demonstrates a primitive but does **not** yet meet the spec's MUST-level bar, that is
 stated explicitly — see §5a (HAIP MUST-level matrix) and §6 (gap to certification).
 
-> ⚠️ **Security audit (2026-06-09) — all code-level findings fixed.** An internal audit
-> ([`docs/SECURITY_AUDIT_2026-06-09.md`](./SECURITY_AUDIT_2026-06-09.md)) found this
-> implementation is **not HAIP 1.0 conformant** and must not be described as an EUDI wallet.
-> All 11 code-level findings (HIGH-1..3, MEDIUM-1..5, LOW-1..2) have been fixed and merged
-> (PRs [#21](https://github.com/tonibergholm/digilompakko/pull/21)–[#30](https://github.com/tonibergholm/digilompakko/pull/30));
-> see the audit document for per-finding status. The architectural gap (HIGH-4) — mandatory
-> HAIP controls (DPoP, wallet/key attestations, `x509_hash` verifier authentication, encrypted
-> `direct_post.jwt` responses, `trusted_authorities`) — remains absent and requires additive
-> engineering tracked in `ROADMAP.md`. Status markers below reflect the current post-fix state;
-> do not read a "✅ demo" marker as "spec-conformant".
+> ✅ **Security audit (2026-06-10) — all 22 code-level findings fixed.** A full manual audit
+> ([`SECURITY_AUDIT.md`](../SECURITY_AUDIT.md)) covering `packages/core`, all apps, mobile,
+> CI/config, and dependencies found 22 implementation gaps. All have been fixed and merged
+> (PRs [#29](https://github.com/tonibergholm/digilompakko/pull/29)–[#39](https://github.com/tonibergholm/digilompakko/pull/39)).
+> The architectural gap — mandatory HAIP controls (DPoP, wallet/key attestations,
+> `x509_hash` verifier authentication, encrypted `direct_post.jwt` responses,
+> `trusted_authorities`) — remains absent and requires additive engineering tracked in
+> `ROADMAP.md`. Status markers below reflect the current post-fix state; do not read a
+> "✅ demo" marker as "spec-conformant".
 
 ---
 
