@@ -5,7 +5,7 @@
  */
 import express from "express";
 import { Wallet } from "./wallet.js";
-import { safeFetch, safeFetchJson } from "@digilompakko/core";
+import { safeFetch } from "@digilompakko/core";
 import type { CredentialOffer } from "@digilompakko/core";
 
 const PORT = Number(process.env.WALLET_PORT ?? 4000);
@@ -19,6 +19,19 @@ await wallet.init();
 
 const app = express();
 app.use(express.json());
+
+// Security headers — applied to every response from the wallet origin.
+// CSP: 'unsafe-inline' is retained for the existing inline <script> block; XSS is mitigated
+// at the DOM level via textContent (see UI template below), so inline scripts are safe.
+app.use((_req, res, next) => {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("Referrer-Policy", "no-referrer");
+  res.setHeader(
+    "Content-Security-Policy",
+    "default-src 'self'; script-src 'self' 'unsafe-inline'",
+  );
+  next();
+});
 
 const MDL_CONFIG_ID = "org.iso.18013.5.1.mDL";
 
@@ -122,12 +135,20 @@ const UI = /* html */ `<!doctype html>
 
 <script>
 const $ = (s) => document.querySelector(s);
+// setText replaces innerHTML string concatenation: textContent never parses HTML so
+// issuer/verifier-controlled values (vct, error) cannot inject script tags. (finding #1)
+function setText(el, cls, msg) {
+  const span = document.createElement('span');
+  span.className = cls;
+  span.textContent = msg;
+  el.replaceChildren(span);
+}
 async function getCredential(endpoint, presentBtn) {
   for (const id of ["#get","#getAuth","#getMdl"]) $(id).disabled = true;
   $("#getOut").textContent = "Requesting…";
   const r = await (await fetch(endpoint, {method:"POST"})).json();
-  if (r.ok) { $("#getOut").innerHTML = '<span class="ok">✓ stored ' + r.vct + (r.flow ? ' via ' + r.flow : '') + '</span>'; $(presentBtn).disabled = false; }
-  else { $("#getOut").innerHTML = '<span class="bad">✗ ' + r.error + '</span>'; }
+  if (r.ok) { setText($("#getOut"), "ok", "✓ stored " + r.vct + (r.flow ? " via " + r.flow : "")); $(presentBtn).disabled = false; }
+  else { setText($("#getOut"), "bad", "✗ " + r.error); }
   for (const id of ["#get","#getAuth","#getMdl"]) $(id).disabled = false;
 }
 $("#get").onclick = () => getCredential("/api/get-credential", "#present");
