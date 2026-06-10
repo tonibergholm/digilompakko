@@ -10,8 +10,9 @@ import {
   readStatus,
   STATUS_INVALID,
   signRequestObject,
-  verifyRequestObject,
 } from "../src/index.js";
+// verifyRequestObject is @internal — import directly from the module, not the public API.
+import { verifyRequestObject } from "../src/request-object.js";
 
 const NS = "org.iso.18013.5.1";
 const AUD = "https://verifier.example";
