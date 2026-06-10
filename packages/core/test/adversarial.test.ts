@@ -23,7 +23,6 @@ import {
   buildStatusListToken,
   readStatus,
   STATUS_VALID,
-  issueSdJwtVc,
   createPresentation,
   verifyPresentation,
   issueMdoc,
