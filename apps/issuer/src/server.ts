@@ -118,10 +118,10 @@ function sweepIssuer(): void {
     if (now - (v.createdAt ?? 0) > 30_000) offers.delete(k);
   }
   for (const [k, v] of parRequests) {
-    if (now - (v.createdAt ?? 0) > 600_000) parRequests.delete(k);
+    if (now - (v.createdAt ?? 0) > PAR_TTL_MS) parRequests.delete(k);
   }
   for (const [k, v] of authCodes) {
-    if (now - (v.createdAt ?? 0) > 600_000) authCodes.delete(k);
+    if (now - (v.createdAt ?? 0) > AUTH_CODE_TTL_MS) authCodes.delete(k);
   }
   for (const [k, v] of accessTokens) {
     if (now - (v.issuedAt ?? 0) > 300_000) accessTokens.delete(k);
@@ -257,6 +257,9 @@ app.post("/token", (req, res) => {
     // Record issuance time; used to enforce both the access-token TTL and the c_nonce TTL.
     // OpenID4VCI §7.2: c_nonce_expires_in informs the wallet when to refresh the nonce.
     pending.issuedAt = Date.now();
+    if (accessTokens.size >= MAX_MAP_SIZE) {
+      return res.status(429).json({ error: "too_many_requests" });
+    }
     accessTokens.set(accessToken, pending);
     res.json({ access_token: accessToken, token_type: "bearer", expires_in: 300, c_nonce: cNonce, c_nonce_expires_in: 300 });
   } catch (e) {
