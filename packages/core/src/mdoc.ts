@@ -101,6 +101,8 @@ export interface MdocClaims {
   validityDays?: number;
   /** Optional Token Status List reference embedded in the MSO for revocation. */
   status?: { idx: number; uri: string };
+  /** Override validFrom timestamp (seconds since epoch). For testing only. */
+  _testValidFrom?: number;
 }
 
 /** Encoded issuer-signed mdoc (base64url of CBOR). Stored by the wallet. */
@@ -135,6 +137,7 @@ export async function issueMdoc(issuerPrivateJwk: JWK, holderPublicJwk: JWK, cre
   }
 
   const now = Math.floor(Date.now() / 1000);
+  const validFrom = cred._testValidFrom ?? now;
   const mso = new Map<string, unknown>([
     ["version", "1.0"],
     ["digestAlgorithm", "SHA-256"],
@@ -143,7 +146,7 @@ export async function issueMdoc(issuerPrivateJwk: JWK, holderPublicJwk: JWK, cre
     ["docType", cred.docType],
     ["validityInfo", new Map<string, number>([
       ["signed", now],
-      ["validFrom", now],
+      ["validFrom", validFrom],
       ["validUntil", now + (cred.validityDays ?? 365) * 86400],
     ])],
   ]);

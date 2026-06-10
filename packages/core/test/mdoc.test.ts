@@ -74,8 +74,17 @@ test("mdoc: CBOR larger than MAX_CBOR_BYTES is rejected before decode", async ()
 });
 
 test("mdoc: credential with validFrom in the future is rejected", async () => {
-  const s = await setup();
-  // Regression: valid credential still passes
-  const result = await verifyMdocPresentation(s.presentation, s.issuerPublicJwk, AUD, s.nonce);
-  assert.ok(result.valid, `expected valid but got errors: ${JSON.stringify(result.errors)}`);
+  const issuer = await generateP256KeyPair();
+  const holder = await generateP256KeyPair();
+  const futureValidFrom = Math.floor(Date.now() / 1000) + 86400; // valid from tomorrow
+  const issued = await issueMdoc(issuer.privateJwk, holder.publicJwk, {
+    docType: DOCTYPE,
+    namespaces: { [NS]: { given_name: "Toni" } },
+    _testValidFrom: futureValidFrom,
+  });
+  const nonce = "n1";
+  const dr = await createMdocPresentation(issued, holder.privateJwk, { [NS]: ["given_name"] }, AUD, nonce);
+  const r = await verifyMdocPresentation(dr, issuer.publicJwk, AUD, nonce);
+  assert.equal(r.valid, false);
+  assert.ok(r.errors.some((e) => e.includes("validFrom")), `expected validFrom error, got: ${JSON.stringify(r.errors)}`);
 });
