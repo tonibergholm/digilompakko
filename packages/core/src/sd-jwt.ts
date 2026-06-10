@@ -176,10 +176,13 @@ export async function verifyPresentation(
       const { payload: kb } = await jwtVerify(kbJwt, holderKey, { typ: "kb+jwt", algorithms: ["ES256"] });
 
       // SD-JWT §7.3: KB-JWT must be fresh — a stale KB-JWT indicates a replay attempt.
+      // Also reject future-dated `iat` (with 60s clock-skew allowance) so an attacker cannot
+      // pre-mint a KB-JWT today that would remain valid indefinitely in the future.
       const KB_JWT_MAX_AGE_S = 300;
+      const CLOCK_SKEW_S = 60;
       const now = Math.floor(Date.now() / 1000);
-      if (typeof kb.iat !== "number" || now - kb.iat > KB_JWT_MAX_AGE_S) {
-        errors.push("KB-JWT too old (replay risk)");
+      if (typeof kb.iat !== "number" || now - kb.iat > KB_JWT_MAX_AGE_S || kb.iat > now + CLOCK_SKEW_S) {
+        errors.push("KB-JWT too old or future-dated (replay risk)");
       }
 
       if (kb.aud !== expectedAudience) errors.push(`KB-JWT audience mismatch: ${kb.aud}`);
