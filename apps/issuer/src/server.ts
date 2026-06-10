@@ -69,7 +69,7 @@ const accessTokens = new Map<string, Pending>();        // access_token -> pendi
 // Authorization Code flow (RFC 9126 PAR + RFC 7636 PKCE):
 interface ParRequest { clientId: string; codeChallenge: string; scope?: string; createdAt: number }
 const parRequests = new Map<string, ParRequest>();      // request_uri -> PAR
-const authCodes = new Map<string, { codeChallenge: string; pending: Pending; createdAt: number }>(); // code -> ...
+const authCodes = new Map<string, { codeChallenge: string; clientId: string; pending: Pending; createdAt: number }>(); // code -> ...
 
 const DEMO_PID: CredentialClaims = {
   vct: PID_CONFIG_ID,
@@ -219,7 +219,9 @@ app.get("/authorize", (req, res) => {
       return res.status(429).json({ error: "too_many_requests" });
     }
     const code = randomUUID();
-    authCodes.set(code, { codeChallenge: par.codeChallenge, pending: { configId: PID_CONFIG_ID }, createdAt: Date.now() });
+    // RFC 7636 §4.5 + RFC 9126 §2.1: bind the code to both the PKCE challenge and the
+    // client_id from PAR so that an intercepted code cannot be redeemed by a different client.
+    authCodes.set(code, { codeChallenge: par.codeChallenge, clientId: par.clientId, pending: { configId: PID_CONFIG_ID }, createdAt: Date.now() });
     parRequests.delete(requestUri);
     // A real flow redirects to the wallet's redirect_uri with ?code=…; the demo returns JSON.
     res.json({ code });
@@ -242,6 +244,13 @@ app.post("/token", (req, res) => {
       if (Date.now() - entry.createdAt > AUTH_CODE_TTL_MS) {
         authCodes.delete(code);
         throw new Oid4vcError("invalid_grant", "authorization code expired");
+      }
+      // RFC 6749 §10.6 + RFC 9126 §2.1: the client_id presented at the token endpoint MUST
+      // match the client_id that obtained the authorization code, preventing code injection by
+      // a different client even when PKCE is satisfied.
+      if (req.body?.client_id !== entry.clientId) {
+        authCodes.delete(code);
+        throw new Oid4vcError("invalid_grant", "client_id mismatch");
       }
       verifyPkce(req.body?.code_verifier, entry.codeChallenge); // throws on mismatch
       authCodes.delete(code);
