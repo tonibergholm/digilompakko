@@ -1,5 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { SignJWT, importJWK } from "jose";
 import {
   generateP256KeyPair,
   StatusList,
@@ -71,5 +72,23 @@ test("StaticTrustResolver: untrusted issuer rejected before any fetch", async ()
   await assert.rejects(
     () => resolver.resolveIssuerKey("https://evil.example"),
     /not on trusted list/,
+  );
+});
+
+test("Status List Token: expired token is rejected by readStatus (#4)", async () => {
+  const keys = await generateP256KeyPair();
+  const key = await importJWK(keys.privateJwk, "ES256");
+  const expired = await new SignJWT({
+    sub: URI,
+    status_list: { bits: 1, lst: new StatusList(8).encode() },
+  })
+    .setProtectedHeader({ alg: "ES256", typ: "statuslist+jwt" })
+    .setIssuer(ISSUER)
+    .setIssuedAt()
+    .setExpirationTime(Math.floor(Date.now() / 1000) - 10)
+    .sign(key);
+  await assert.rejects(
+    () => readStatus(expired, 0, keys.publicJwk, OPTS),
+    /status list token invalid/,
   );
 });

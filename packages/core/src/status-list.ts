@@ -57,12 +57,20 @@ export class StatusList {
   }
 }
 
-/** Build a signed Status List Token (JWT, typ `statuslist+jwt`). */
+/**
+ * Build a signed Status List Token (JWT, typ `statuslist+jwt`).
+ *
+ * draft-ietf-oauth-status-list §4: the token SHOULD carry an `exp` claim so that a stale
+ * cached snapshot of the list cannot be used indefinitely to falsely report a revoked credential
+ * as VALID. The default TTL is 1 hour; callers (e.g. the issuer's /statuslist endpoint) should
+ * tune this to match their cache-control policy.
+ */
 export async function buildStatusListToken(
   issuerPrivateJwk: JWK,
   issuer: string,
   subjectUri: string,
   list: StatusList,
+  ttlSeconds = 3600,
 ): Promise<string> {
   const key = await importJWK(issuerPrivateJwk, ALG);
   return new SignJWT({
@@ -72,6 +80,7 @@ export async function buildStatusListToken(
     .setProtectedHeader({ alg: ALG, typ: "statuslist+jwt" })
     .setIssuer(issuer)
     .setIssuedAt()
+    .setExpirationTime(Math.floor(Date.now() / 1000) + ttlSeconds)
     .sign(key);
 }
 

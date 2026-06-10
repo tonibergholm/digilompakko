@@ -69,7 +69,7 @@ const accessTokens = new Map<string, Pending>();        // access_token -> pendi
 // Authorization Code flow (RFC 9126 PAR + RFC 7636 PKCE):
 interface ParRequest { clientId: string; codeChallenge: string; scope?: string; createdAt: number }
 const parRequests = new Map<string, ParRequest>();      // request_uri -> PAR
-const authCodes = new Map<string, { codeChallenge: string; pending: Pending; createdAt: number }>(); // code -> ...
+const authCodes = new Map<string, { codeChallenge: string; clientId: string; pending: Pending; createdAt: number }>(); // code -> ...
 
 const DEMO_PID: CredentialClaims = {
   vct: PID_CONFIG_ID,
@@ -107,6 +107,9 @@ const ACCESS_TOKEN_TTL_MS = 5 * 60 * 1000; // 300 s — matches expires_in in /t
 const C_NONCE_TTL_MS = 5 * 60 * 1000;      // 300 s — matches c_nonce_expires_in in /token response
 const AUTH_CODE_TTL_MS = 60 * 1000;         // 60 s  — RFC 6749 §4.1.2: short-lived auth codes
 const PAR_TTL_MS = 90 * 1000;               // 90 s  — matches expires_in in /par response
+// OpenID4VCI §4.1.1: pre-authorized codes MUST be short-lived and single-use; 30 s is tight
+// enough to prevent offline brute-force while still giving the wallet time to exchange the code.
+const PRE_AUTH_CODE_TTL_MS = 30_000;        // 30 s  (#11)
 
 // --- In-memory store size cap and periodic TTL sweep (finding #10) ---
 // Prevents unbounded Map growth from unauthenticated offer/PAR/authorize endpoints.
@@ -115,7 +118,7 @@ const MAX_MAP_SIZE = 10_000;
 function sweepIssuer(): void {
   const now = Date.now();
   for (const [k, v] of offers) {
-    if (now - (v.createdAt ?? 0) > 30_000) offers.delete(k);
+    if (now - (v.createdAt ?? 0) > PRE_AUTH_CODE_TTL_MS) offers.delete(k);
   }
   for (const [k, v] of parRequests) {
     if (now - (v.createdAt ?? 0) > PAR_TTL_MS) parRequests.delete(k);
@@ -124,7 +127,7 @@ function sweepIssuer(): void {
     if (now - (v.createdAt ?? 0) > AUTH_CODE_TTL_MS) authCodes.delete(k);
   }
   for (const [k, v] of accessTokens) {
-    if (now - (v.issuedAt ?? 0) > 300_000) accessTokens.delete(k);
+    if (now - (v.issuedAt ?? 0) > ACCESS_TOKEN_TTL_MS) accessTokens.delete(k);
   }
 }
 setInterval(sweepIssuer, 60_000).unref();
@@ -216,7 +219,9 @@ app.get("/authorize", (req, res) => {
       return res.status(429).json({ error: "too_many_requests" });
     }
     const code = randomUUID();
-    authCodes.set(code, { codeChallenge: par.codeChallenge, pending: { configId: PID_CONFIG_ID }, createdAt: Date.now() });
+    // RFC 7636 §4.5 + RFC 9126 §2.1: bind the code to both the PKCE challenge and the
+    // client_id from PAR so that an intercepted code cannot be redeemed by a different client.
+    authCodes.set(code, { codeChallenge: par.codeChallenge, clientId: par.clientId, pending: { configId: PID_CONFIG_ID }, createdAt: Date.now() });
     parRequests.delete(requestUri);
     // A real flow redirects to the wallet's redirect_uri with ?code=…; the demo returns JSON.
     res.json({ code });
@@ -240,14 +245,25 @@ app.post("/token", (req, res) => {
         authCodes.delete(code);
         throw new Oid4vcError("invalid_grant", "authorization code expired");
       }
+      // RFC 6749 §10.6 + RFC 9126 §2.1: the client_id presented at the token endpoint MUST
+      // match the client_id that obtained the authorization code, preventing code injection by
+      // a different client even when PKCE is satisfied.
+      if (req.body?.client_id !== entry.clientId) {
+        authCodes.delete(code);
+        throw new Oid4vcError("invalid_grant", "client_id mismatch");
+      }
       verifyPkce(req.body?.code_verifier, entry.codeChallenge); // throws on mismatch
       authCodes.delete(code);
       pending = entry.pending;
     } else {
       const code = req.body?.["pre-authorized_code"];
       pending = code ? offers.get(code) : undefined;
-      if (!pending) throw new Oid4vcError("invalid_grant", "unknown or used pre-authorized_code");
-      offers.delete(code);
+      // OpenID4VCI §4.1.1: pre-authorized codes are single-use and short-lived.
+      // Delete before TTL check so an expired code cannot be retried by the same request.
+      if (code) offers.delete(code);
+      if (!pending || Date.now() - (pending.createdAt ?? 0) > PRE_AUTH_CODE_TTL_MS) {
+        throw new Oid4vcError("invalid_grant", "pre-authorized_code expired or unknown");
+      }
     }
 
     const accessToken = randomUUID();
