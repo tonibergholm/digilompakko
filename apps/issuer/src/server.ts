@@ -39,6 +39,18 @@ const MDL_NAMESPACE = "org.iso.18013.5.1";
 const app = express();
 app.use(express.json());
 
+const ADMIN_TOKEN = process.env.ADMIN_TOKEN;
+if (!ADMIN_TOKEN) throw new Error("ADMIN_TOKEN env var is required");
+
+function requireAdmin(req: express.Request, res: express.Response, next: express.NextFunction): void {
+  const auth = req.headers["authorization"];
+  if (auth !== `Bearer ${ADMIN_TOKEN}`) {
+    res.status(401).json({ error: "unauthorized" });
+    return;
+  }
+  next();
+}
+
 // --- Issuer signing key (generated at startup; published via JWKS) ---
 const issuerKeys = await generateP256KeyPair();
 
@@ -51,7 +63,7 @@ const issuedRecords: IssuedRecord[] = [];
 // --- In-memory issuance stores ---
 // A Pending records which credential configuration the holder is being issued.
 // `issuedAt` is set when /token issues the access_token + c_nonce; used to enforce both TTLs.
-interface Pending { configId: string; cNonce?: string; accessToken?: string; issuedAt?: number }
+interface Pending { configId: string; cNonce?: string; accessToken?: string; issuedAt?: number; createdAt?: number }
 const offers = new Map<string, Pending>();             // pre-authorized_code -> pending
 const accessTokens = new Map<string, Pending>();        // access_token -> pending
 // Authorization Code flow (RFC 9126 PAR + RFC 7636 PKCE):
@@ -96,6 +108,27 @@ const C_NONCE_TTL_MS = 5 * 60 * 1000;      // 300 s — matches c_nonce_expires_
 const AUTH_CODE_TTL_MS = 60 * 1000;         // 60 s  — RFC 6749 §4.1.2: short-lived auth codes
 const PAR_TTL_MS = 90 * 1000;               // 90 s  — matches expires_in in /par response
 
+// --- In-memory store size cap and periodic TTL sweep (finding #10) ---
+// Prevents unbounded Map growth from unauthenticated offer/PAR/authorize endpoints.
+const MAX_MAP_SIZE = 10_000;
+
+function sweepIssuer(): void {
+  const now = Date.now();
+  for (const [k, v] of offers) {
+    if (now - (v.createdAt ?? 0) > 30_000) offers.delete(k);
+  }
+  for (const [k, v] of parRequests) {
+    if (now - (v.createdAt ?? 0) > 600_000) parRequests.delete(k);
+  }
+  for (const [k, v] of authCodes) {
+    if (now - (v.createdAt ?? 0) > 600_000) authCodes.delete(k);
+  }
+  for (const [k, v] of accessTokens) {
+    if (now - (v.issuedAt ?? 0) > 300_000) accessTokens.delete(k);
+  }
+}
+setInterval(sweepIssuer, 60_000).unref();
+
 // 1) Issuer metadata
 app.get("/.well-known/openid-credential-issuer", (_req, res) => {
   res.json({
@@ -132,8 +165,11 @@ app.post("/offer", (req, res) => {
   try {
     const configId = req.body?.credential_configuration_id ?? PID_CONFIG_ID;
     if (!SUPPORTED_CONFIGS.has(configId)) throw new Oid4vcError("invalid_request", `unknown configuration: ${configId}`);
+    if (offers.size >= MAX_MAP_SIZE) {
+      return res.status(429).json({ error: "too_many_requests" });
+    }
     const preAuthCode = randomUUID();
-    offers.set(preAuthCode, { configId });
+    offers.set(preAuthCode, { configId, createdAt: Date.now() });
     res.json({
       credential_issuer: ISSUER_URL,
       credential_configuration_ids: [configId],
@@ -153,6 +189,9 @@ app.post("/par", (req, res) => {
     if (!client_id) throw new Oid4vcError("invalid_request", "missing client_id");
     if (code_challenge_method !== "S256") throw new Oid4vcError("invalid_request", "code_challenge_method must be S256");
     if (!code_challenge) throw new Oid4vcError("invalid_request", "missing code_challenge");
+    if (parRequests.size >= MAX_MAP_SIZE) {
+      return res.status(429).json({ error: "too_many_requests" });
+    }
     const requestUri = `urn:ietf:params:oauth:request_uri:${randomUUID()}`;
     parRequests.set(requestUri, { clientId: client_id, codeChallenge: code_challenge, scope, createdAt: Date.now() });
     res.json({ request_uri: requestUri, expires_in: 90 });
@@ -172,6 +211,9 @@ app.get("/authorize", (req, res) => {
     if (Date.now() - par.createdAt > PAR_TTL_MS) {
       parRequests.delete(requestUri);
       throw new Oid4vcError("invalid_request", "request_uri expired");
+    }
+    if (authCodes.size >= MAX_MAP_SIZE) {
+      return res.status(429).json({ error: "too_many_requests" });
     }
     const code = randomUUID();
     authCodes.set(code, { codeChallenge: par.codeChallenge, pending: { configId: PID_CONFIG_ID }, createdAt: Date.now() });
@@ -284,8 +326,8 @@ app.get("/statuslist", async (_req, res) => {
   res.type("application/statuslist+jwt").send(token);
 });
 
-// 6) Admin: revoke a credential by its status index (demo only — no auth).
-app.post("/admin/revoke", (req, res) => {
+// 6) Admin: revoke a credential by its status index — requires Bearer ADMIN_TOKEN (#3).
+app.post("/admin/revoke", requireAdmin, (req, res) => {
   try {
     const idx = Number(req.body?.idx);
     if (!Number.isInteger(idx)) throw new Oid4vcError("invalid_request", "idx must be an integer");
@@ -296,7 +338,7 @@ app.post("/admin/revoke", (req, res) => {
   }
 });
 
-// 7) Admin: list issued records (demo helper).
-app.get("/admin/issued", (_req, res) => res.json(issuedRecords));
+// 7) Admin: list issued records — requires Bearer ADMIN_TOKEN (#3).
+app.get("/admin/issued", requireAdmin, (_req, res) => res.json(issuedRecords));
 
 app.listen(PORT, () => console.log(`[issuer]   OpenID4VCI issuer + status list on ${ISSUER_URL}`));
