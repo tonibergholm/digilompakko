@@ -152,7 +152,7 @@ export async function safeFetch(url: string, init?: RequestInit): Promise<Respon
           // Convert to GET and drop body for 301/302/303 cross-origin redirects.
           currentInit = { headers, method: "GET", body: undefined };
         } else {
-          // 307/308: preserve method and body, but still strip credentials.
+          // 307/308: preserve method; drop body and strip credentials for safety on cross-origin.
           currentInit = { ...currentInit, headers, body: undefined };
         }
       }
