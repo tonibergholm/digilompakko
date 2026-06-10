@@ -5,6 +5,7 @@ import {
   issueMdoc,
   createMdocPresentation,
   verifyMdocPresentation,
+  MAX_CBOR_BYTES,
 } from "../src/index.js";
 
 const DOCTYPE = "org.iso.18013.5.1.mDL";
@@ -20,7 +21,9 @@ async function setup() {
       [NS]: { family_name: "Bergholm", given_name: "Toni", age_over_18: true, document_number: "X1234567" },
     },
   });
-  return { issuer, holder, issued };
+  const nonce = "n-" + Math.random().toString(36).slice(2);
+  const presentation = await createMdocPresentation(issued, holder.privateJwk, { [NS]: ["given_name"] }, AUD, nonce);
+  return { issuer, holder, issued, nonce, presentation, issuerPublicJwk: issuer.publicJwk };
 }
 
 test("mdoc: selective disclosure reveals only requested elements", async () => {
@@ -58,4 +61,30 @@ test("mdoc: device binding — different holder key rejected", async () => {
   const dr = await createMdocPresentation(issued, attacker.privateJwk, { [NS]: ["given_name"] }, AUD, "n");
   const r = await verifyMdocPresentation(dr, issuer.publicJwk, AUD, "n");
   assert.equal(r.valid, false);
+});
+
+test("mdoc: CBOR larger than MAX_CBOR_BYTES is rejected before decode", async () => {
+  const s = await setup();
+  // one byte over the limit — too large to be a real DeviceResponse
+  const huge = Buffer.alloc(MAX_CBOR_BYTES + 1).toString("base64url");
+  await assert.rejects(
+    () => verifyMdocPresentation(huge, s.issuerPublicJwk, AUD, s.nonce),
+    /too large/i,
+  );
+});
+
+test("mdoc: credential with validFrom in the future is rejected", async () => {
+  const issuer = await generateP256KeyPair();
+  const holder = await generateP256KeyPair();
+  const futureValidFrom = Math.floor(Date.now() / 1000) + 86400; // valid from tomorrow
+  const issued = await issueMdoc(issuer.privateJwk, holder.publicJwk, {
+    docType: DOCTYPE,
+    namespaces: { [NS]: { given_name: "Toni" } },
+    _testValidFrom: futureValidFrom,
+  });
+  const nonce = "n1";
+  const dr = await createMdocPresentation(issued, holder.privateJwk, { [NS]: ["given_name"] }, AUD, nonce);
+  const r = await verifyMdocPresentation(dr, issuer.publicJwk, AUD, nonce);
+  assert.equal(r.valid, false);
+  assert.ok(r.errors.some((e) => e.includes("validFrom")), `expected validFrom error, got: ${JSON.stringify(r.errors)}`);
 });
