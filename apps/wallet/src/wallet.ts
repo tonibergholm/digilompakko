@@ -13,6 +13,7 @@ import {
   peekPayload,
   pkceS256Challenge,
   safeFetch,
+  safeFetchJson,
   Oid4vcError,
   ALG,
   type JWK,
@@ -92,7 +93,7 @@ export class Wallet {
       scope: "pid",
     })) as { request_uri: string };
 
-    const auth = (await (await fetch(`${issuer}/authorize?request_uri=${encodeURIComponent(par.request_uri)}`)).json()) as { code: string };
+    const auth = await safeFetchJson<{ code: string }>(`${issuer}/authorize?request_uri=${encodeURIComponent(par.request_uri)}`);
 
     const token = (await this.postJson(`${issuer}/token`, {
       grant_type: "authorization_code",
@@ -116,7 +117,7 @@ export class Wallet {
       { iat: Math.floor(Date.now() / 1000), nonce: token.c_nonce, aud: issuer },
     );
 
-    const credRes = await fetch(`${issuer}/credential`, {
+    const credRes = await safeFetch(`${issuer}/credential`, {
       method: "POST",
       headers: { "content-type": "application/json", authorization: `Bearer ${token.access_token}` },
       body: JSON.stringify({ format, proof: { proof_type: "jwt", jwt: proofJwt } }),
@@ -140,7 +141,7 @@ export class Wallet {
         ? await this.buildMdocPresentation(request, revealOverride)
         : await this.buildSdJwtPresentation(request, revealOverride);
 
-    const postRes = await fetch(request.response_uri, {
+    const postRes = await safeFetch(request.response_uri, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ vp_token: vpToken }),
@@ -162,7 +163,7 @@ export class Wallet {
    * Verification of typ / exp / aud is delegated to verifyPresentationRequest in packages/core.
    */
   private async resolveRequest(requestUri: string): Promise<PresentationRequestObject> {
-    const raw = (await (await fetch(requestUri)).json()) as { request?: string } & PresentationRequestObject;
+    const raw = await safeFetchJson<{ request?: string } & PresentationRequestObject>(requestUri);
 
     // RFC 9101 §4 + HAIP: unsigned requests MUST be rejected — no legacy bypass.
     if (!raw.request) {

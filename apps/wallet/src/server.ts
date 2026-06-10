@@ -5,6 +5,7 @@
  */
 import express from "express";
 import { Wallet } from "./wallet.js";
+import { safeFetch, safeFetchJson } from "@digilompakko/core";
 import type { CredentialOffer } from "@digilompakko/core";
 
 const PORT = Number(process.env.WALLET_PORT ?? 4000);
@@ -24,7 +25,8 @@ const MDL_CONFIG_ID = "org.iso.18013.5.1.mDL";
 // Step 1: obtain a PID (SD-JWT VC) credential via a fresh offer from the issuer.
 app.post("/api/get-credential", async (_req, res) => {
   try {
-    const offer = (await (await fetch(`${ISSUER_URL}/offer`, { method: "POST" })).json()) as CredentialOffer;
+    const offerRes = await safeFetch(`${ISSUER_URL}/offer`, { method: "POST" });
+    const offer = (await offerRes.json()) as CredentialOffer;
     const stored = await wallet.acceptOffer(offer);
     res.json({ ok: true, vct: stored.vct, count: wallet.credentials.length });
   } catch (e) {
@@ -35,11 +37,12 @@ app.post("/api/get-credential", async (_req, res) => {
 // Step 1c: obtain an mDL (ISO 18013-5 mso_mdoc) credential.
 app.post("/api/get-mdl", async (_req, res) => {
   try {
-    const offer = (await (await fetch(`${ISSUER_URL}/offer`, {
+    const mdlOfferRes = await safeFetch(`${ISSUER_URL}/offer`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ credential_configuration_id: MDL_CONFIG_ID }),
-    })).json()) as CredentialOffer;
+    });
+    const offer = (await mdlOfferRes.json()) as CredentialOffer;
     const stored = await wallet.acceptOffer(offer);
     res.json({ ok: true, vct: stored.docType, count: wallet.credentials.length, flow: "mso_mdoc" });
   } catch (e) {
@@ -63,7 +66,8 @@ app.post("/api/present", async (req, res) => {
     const reveal: string[] | undefined = req.body?.reveal;
     const format: string = req.body?.format === "mso_mdoc" ? "mso_mdoc" : "dc+sd-jwt";
     const url = `${VERIFIER_URL}/presentation/request${format === "mso_mdoc" ? "?format=mso_mdoc" : ""}`;
-    const { request_uri } = (await (await fetch(url, { method: "POST" })).json()) as { request_uri: string };
+    const presentReqRes = await safeFetch(url, { method: "POST" });
+    const { request_uri } = (await presentReqRes.json()) as { request_uri: string };
     const { result } = await wallet.present(request_uri, reveal);
     res.json({ ok: true, result });
   } catch (e) {
