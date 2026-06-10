@@ -5,7 +5,7 @@
  */
 import express from "express";
 import { Wallet } from "./wallet.js";
-import { safeFetch, safeFetchJson } from "@digilompakko/core";
+import { safeFetch } from "@digilompakko/core";
 import type { CredentialOffer } from "@digilompakko/core";
 
 const PORT = Number(process.env.WALLET_PORT ?? 4000);
