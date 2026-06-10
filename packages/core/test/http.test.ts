@@ -1,6 +1,7 @@
 import { strict as assert } from "node:assert";
 import { describe, it } from "node:test";
-import { assertSafeUrl } from "../src/http.js";
+import * as http from "node:http";
+import { assertSafeUrl, safeFetch, safeFetchText } from "../src/http.js";
 import { Oid4vcError } from "../src/errors.js";
 
 describe("assertSafeUrl", () => {
@@ -57,5 +58,64 @@ describe("assertSafeUrl", () => {
       () => assertSafeUrl("ftp://example.com/data"),
       (e: unknown) => e instanceof Oid4vcError,
     );
+  });
+
+  // Private / link-local IP blocking (SSRF hardening)
+  it("blocks RFC 1918 10.x range over HTTPS", () => {
+    assert.throws(() => assertSafeUrl("https://10.0.0.1/secret"), /private/i);
+  });
+  it("blocks RFC 1918 172.16.x range over HTTPS", () => {
+    assert.throws(() => assertSafeUrl("https://172.16.255.255/"), /private/i);
+  });
+  it("blocks RFC 1918 192.168.x range over HTTPS", () => {
+    assert.throws(() => assertSafeUrl("https://192.168.1.1/"), /private/i);
+  });
+  it("blocks link-local / metadata endpoint over HTTPS", () => {
+    assert.throws(() => assertSafeUrl("https://169.254.169.254/"), /private/i);
+  });
+  it("blocks ULA IPv6 over HTTPS", () => {
+    assert.throws(() => assertSafeUrl("https://[fc00::1]/"), /private/i);
+  });
+  it("blocks link-local IPv6 over HTTPS", () => {
+    assert.throws(() => assertSafeUrl("https://[fe80::1]/"), /private/i);
+  });
+  it("still allows localhost", () => {
+    assert.doesNotThrow(() => assertSafeUrl("http://localhost:4001/"));
+  });
+  it("still allows 127.0.0.1", () => {
+    assert.doesNotThrow(() => assertSafeUrl("http://127.0.0.1:4001/"));
+  });
+});
+
+describe("safeFetch redirect safety", () => {
+  it("safeFetch: redirect to private IP is rejected", async () => {
+    const server = http.createServer((_req, res) => {
+      res.writeHead(302, { Location: "https://10.0.0.1/steal" });
+      res.end();
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const { port } = server.address() as { port: number };
+    await assert.rejects(
+      () => safeFetch(`http://127.0.0.1:${port}/redirect`),
+      /private/i,
+    );
+    server.close();
+  });
+});
+
+describe("safeFetchText body size cap", () => {
+  it("safeFetchText: aborts body larger than MAX_BODY_BYTES", async () => {
+    const big = Buffer.alloc(2 * 1024 * 1024, 0x41); // 2 MiB of 'A'
+    const server = http.createServer((_req, res) => {
+      res.writeHead(200, { "Content-Type": "text/plain" });
+      res.end(big);
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const { port } = server.address() as { port: number };
+    await assert.rejects(
+      () => safeFetchText(`http://127.0.0.1:${port}/big`),
+      /too large/i,
+    );
+    server.close();
   });
 });
