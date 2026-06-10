@@ -92,12 +92,25 @@ interface Session {
   createdAt: number;
   /** True once a vp_token has been accepted for this session. Any further submission is replay. */
   consumed: boolean;
+  /** Opaque token returned to the RP at request creation; never reaches the wallet (#13). */
+  resultToken: string;
   result?: unknown;
 }
 // OpenID4VP §6.2: the verifier MUST ensure each nonce is used only once.  A session that has
 // already received a valid vp_token, or that was created more than SESSION_TTL_MS ago, is refused.
 const SESSION_TTL_MS = 5 * 60 * 1000; // 5 minutes
 const sessions = new Map<string, Session>();
+
+// --- In-memory store size cap and periodic TTL sweep (finding #10) ---
+const MAX_MAP_SIZE = 10_000;
+
+function sweepVerifier(): void {
+  const now = Date.now();
+  for (const [k, v] of sessions) {
+    if (now - v.createdAt > SESSION_TTL_MS) sessions.delete(k);
+  }
+}
+setInterval(sweepVerifier, 60_000).unref();
 
 // Verifier (RP) public key — the wallet verifies signed request objects against this.
 app.get("/jwks.json", (_req, res) => res.json({ keys: [verifierKeys.publicJwk] }));
@@ -113,11 +126,14 @@ app.post("/presentation/request", (req, res) => {
   try {
     // Data-minimisation gate: refuse to build a request for attributes we are not entitled to.
     rpRegistry.assertEntitled(VERIFIER_URL, REQUESTED_ATTRS);
+    if (sessions.size >= MAX_MAP_SIZE) {
+      return res.status(429).json({ error: "too_many_requests" });
+    }
     const format: Format = req.query.format === "mso_mdoc" ? "mso_mdoc" : "dc+sd-jwt";
-    const id = randomUUID();
-    const nonce = randomUUID();
-    sessions.set(id, { nonce, format, createdAt: Date.now(), consumed: false });
-    res.json({ request_id: id, request_uri: `${VERIFIER_URL}/presentation/request/${id}` });
+    const id = randomUUID();            // embedded in request_uri; given to wallet
+    const resultToken = randomUUID();   // returned to RP; never reaches wallet (#13)
+    sessions.set(id, { nonce: randomUUID(), format, createdAt: Date.now(), consumed: false, resultToken });
+    res.json({ request_id: id, request_uri: `${VERIFIER_URL}/presentation/request/${id}`, result_token: resultToken });
   } catch (e) {
     sendError(res, e);
   }
@@ -232,10 +248,14 @@ app.post("/presentation/response", async (req, res) => {
   }
 });
 
-app.get("/presentation/result/:id", (req, res) => {
-  const session = sessions.get(req.params.id);
-  if (!session) return res.status(404).json({ error: "unknown request" });
-  res.json(session.result ?? { pending: true });
+// Result polling: look up by resultToken (never by session id — id travels to the wallet, #13).
+// PII is purged from the session after the first successful read.
+app.get("/presentation/result/:resultToken", (req, res) => {
+  const session = [...sessions.values()].find(s => s.resultToken === req.params.resultToken);
+  if (!session) return res.status(404).json({ error: "unknown token" });
+  const out = session.result ?? { pending: true };
+  session.result = undefined; // purge PII after first read
+  res.json(out);
 });
 
 app.listen(PORT, () => {
