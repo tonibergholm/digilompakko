@@ -1,33 +1,86 @@
 /**
- * Hardened HTTP client utilities (MEDIUM-1 remediation).
+ * Hardened HTTP client utilities (SSRF hardening — findings #2, #7, #9).
  *
  * All outbound fetches in the wallet/verifier must go through these helpers to prevent
  * SSRF, resource exhaustion, and redirect-based exfiltration:
- *   - assertSafeUrl: rejects non-HTTPS URLs unless the host is a loopback address.
- *     HTTP to localhost/127.0.0.1/::1 is allowed so the demo works without TLS.
- *   - safeFetch: wraps fetch with a 5-second abort timeout and HTTP-status check.
- *   - safeFetchJson / safeFetchText: consume the body and enforce a 1 MiB size cap.
+ *   - assertSafeUrl: rejects non-HTTPS URLs unless the host is a loopback address;
+ *     additionally rejects RFC 1918 / link-local / ULA private IP ranges even over HTTPS.
+ *   - safeFetch: manual redirect loop that re-validates each hop through assertSafeUrl,
+ *     with a per-hop 5-second abort timeout.
+ *   - safeFetchText: consumes body via a streaming byte counter and enforces a 1 MiB cap.
+ *   - safeFetchJson: wraps safeFetchText with JSON.parse.
  *
  * Design decisions:
- *   - No blocking on Content-Length alone (can be spoofed or absent); we read the body
- *     and count bytes after receiving it.
- *   - Redirects are followed by default (Node fetch behaviour), which is acceptable here
- *     because the HTTPS-only + loopback rule means a redirect to a private IP via HTTP
- *     will be blocked at the next request.
+ *   - Private IPs are blocked regardless of protocol — HTTPS to 10.x is still SSRF.
+ *   - Redirects use redirect:"manual" so we inspect the Location header and re-run
+ *     assertSafeUrl before following each hop; this closes the redirect-to-private-IP vector.
+ *   - Body cap is enforced via a streaming reader, not Content-Length (can be spoofed/absent).
+ *   - HTTP to localhost/127.0.0.1/::1 is allowed so the demo works without TLS.
  */
 import { Oid4vcError } from "./errors.js";
 
 const FETCH_TIMEOUT_MS = 5_000;
-const MAX_BODY_BYTES = 1_048_576; // 1 MiB
+export const MAX_BODY_BYTES = 1_048_576; // 1 MiB
+const MAX_REDIRECTS = 5;
 
 const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
 /**
+ * Returns true if `hostname` is an RFC 1918 private IPv4 address or a link-local IPv4 address
+ * (169.254.x.x / AWS metadata endpoint).
+ */
+function isPrivateIPv4(hostname: string): boolean {
+  const m = hostname.match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/);
+  if (!m) return false;
+  const [, a, b] = m.map(Number);
+  if (a === 10) return true;                          // RFC 1918 10.0.0.0/8
+  if (a === 172 && b >= 16 && b <= 31) return true;  // RFC 1918 172.16.0.0/12
+  if (a === 192 && b === 168) return true;            // RFC 1918 192.168.0.0/16
+  if (a === 169 && b === 254) return true;            // Link-local / metadata
+  return false;
+}
+
+/**
+ * Returns true if `hostname` is a ULA (fc00::/7), link-local (fe80::/10), or
+ * IPv4-mapped IPv6 address (::ffff:0:0/96) that embeds a private IPv4 address.
+ * Input may or may not be bracket-wrapped.
+ */
+function isPrivateIPv6(hostname: string): boolean {
+  const h = hostname.startsWith("[") ? hostname.slice(1, -1) : hostname;
+  // IPv4-mapped IPv6: ::ffff:x.x.x.x (dotted-decimal) or ::ffff:hhhh:hhhh (hex groups).
+  // WHATWG URL normalization converts dotted-decimal to hex, so we must handle both forms.
+  const v4mapped =
+    h.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/i) ??
+    h.match(/^::ffff:([0-9a-f]+):([0-9a-f]+)$/i);
+  if (v4mapped) {
+    if (v4mapped.length === 3) {
+      // Hex form: ::ffff:0a00:0001 → decode to 10.0.0.1
+      const hi = parseInt(v4mapped[1], 16);
+      const lo = parseInt(v4mapped[2], 16);
+      const dotted = `${hi >> 8}.${hi & 0xff}.${lo >> 8}.${lo & 0xff}`;
+      return isPrivateIPv4(dotted);
+    }
+    return isPrivateIPv4(v4mapped[1]);
+  }
+  // ULA: fc00::/7 — addresses starting with fc or fd
+  if (/^fc/i.test(h) || /^fd/i.test(h)) return true;
+  // Link-local: fe80::/10 — fe80..feb (first two hex digits fe, third digit 8-b)
+  if (/^fe8/i.test(h) || /^fe9/i.test(h) || /^fea/i.test(h) || /^feb/i.test(h)) return true;
+  return false;
+}
+
+/**
  * Assert that `rawUrl` is safe to fetch from:
- *   - Must be a valid URL.
- *   - Must use HTTPS, OR be directed at a loopback host (localhost / 127.0.0.1 / ::1).
+ *   1. Must be a valid URL.
+ *   2. Must not be a private/link-local IPv4 or IPv6 address (blocks SSRF even over HTTPS).
+ *   3. Must use HTTPS, OR be directed at a loopback host (localhost / 127.0.0.1 / ::1).
  *
- * Throws Oid4vcError("invalid_request") if the URL fails either check.
+ * Note: this check operates on URL syntax only (IP literals and hostnames).
+ * DNS rebinding — where a hostname initially resolves to a public IP but later
+ * resolves to a private one — requires a dispatcher-level lookup hook and is
+ * out of scope here. See ROADMAP.
+ *
+ * Throws Oid4vcError("invalid_request") if any check fails.
  */
 export function assertSafeUrl(rawUrl: string): URL {
   let url: URL;
@@ -36,6 +89,15 @@ export function assertSafeUrl(rawUrl: string): URL {
   } catch {
     throw new Oid4vcError("invalid_request", `SSRF guard: invalid URL: ${rawUrl}`);
   }
+
+  // Block private/link-local IP ranges even over HTTPS — SSRF is not protocol-dependent.
+  if (isPrivateIPv4(url.hostname) || isPrivateIPv6(url.hostname)) {
+    throw new Oid4vcError(
+      "invalid_request",
+      `SSRF guard: private/link-local IP address rejected: ${url.hostname}`,
+    );
+  }
+
   const isLoopback = LOOPBACK_HOSTS.has(url.hostname);
   if (!isLoopback && url.protocol !== "https:") {
     throw new Oid4vcError(
@@ -47,37 +109,89 @@ export function assertSafeUrl(rawUrl: string): URL {
 }
 
 /**
- * Fetch `url` with a 5-second timeout.  Throws on network error, non-2xx status, or
- * an unsafe URL (see assertSafeUrl).
+ * Fetch `url` with a 5-second timeout per hop.  Follows redirects manually so each hop
+ * is re-validated through assertSafeUrl — this prevents redirect-to-private-IP attacks.
+ *
+ * On cross-origin redirects, credential headers (Authorization, Cookie, Cookie2) are
+ * stripped and (for 301/302/303) the method is converted to GET per RFC 9110 §15.4.
+ * Once stripped, credentials are never re-added even if a later hop returns to the
+ * original origin.
+ *
+ * Throws on network error, non-2xx status, or an unsafe URL (see assertSafeUrl).
  */
 export async function safeFetch(url: string, init?: RequestInit): Promise<Response> {
   assertSafeUrl(url);
-  const ac = new AbortController();
-  const timer = setTimeout(() => ac.abort(), FETCH_TIMEOUT_MS);
-  let res: Response;
-  try {
-    res = await fetch(url, { ...init, signal: ac.signal });
-  } catch (e) {
-    throw new Oid4vcError("status_unavailable", `network error fetching ${url}: ${(e as Error).message}`);
-  } finally {
-    clearTimeout(timer);
+  let current = url;
+  // currentInit carries credential-stripping forward across hops; signal is added inline.
+  let currentInit: RequestInit = { ...(init ?? {}) };
+  for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+    let res: Response;
+    try {
+      res = await fetch(current, { ...currentInit, redirect: "manual", signal: controller.signal });
+    } catch (e) {
+      throw new Oid4vcError("status_unavailable", `network error fetching ${current}: ${(e as Error).message}`);
+    } finally {
+      clearTimeout(timer);
+    }
+    if (res.status >= 300 && res.status < 400) {
+      const location = res.headers.get("location");
+      if (!location) throw new Oid4vcError("invalid_request", "redirect with no Location header");
+      const resolved = new URL(location, current).toString();
+      // Re-validate each redirect hop — closes the redirect-to-private-IP vector (#2).
+      assertSafeUrl(resolved);
+      // Strip credentials on cross-origin redirect (RFC 9110 §15.4).
+      // Once stripped, credentials are never restored even for later same-origin hops.
+      if (new URL(resolved).origin !== new URL(current).origin) {
+        const headers = new Headers(currentInit.headers as ConstructorParameters<typeof Headers>[0]);
+        headers.delete("authorization");
+        headers.delete("cookie");
+        headers.delete("cookie2");
+        if (res.status === 301 || res.status === 302 || res.status === 303) {
+          // Convert to GET and drop body for 301/302/303 cross-origin redirects.
+          currentInit = { headers, method: "GET", body: undefined };
+        } else {
+          // 307/308: preserve method; drop body and strip credentials for safety on cross-origin.
+          currentInit = { ...currentInit, headers, body: undefined };
+        }
+      }
+      current = resolved;
+      continue;
+    }
+    if (!res.ok) {
+      throw new Oid4vcError("status_unavailable", `HTTP ${res.status} from ${current}`);
+    }
+    return res;
   }
-  if (!res.ok) {
-    throw new Oid4vcError("status_unavailable", `HTTP ${res.status} from ${url}`);
-  }
-  return res;
+  throw new Oid4vcError("invalid_request", `too many redirects (max ${MAX_REDIRECTS})`);
 }
 
 /**
- * Fetch `url`, read the body as UTF-8 text, and enforce the 1 MiB size cap.
+ * Fetch `url`, read the body as UTF-8 text via a streaming byte counter, and enforce
+ * the 1 MiB size cap.  Throws if the body exceeds MAX_BODY_BYTES.
  */
 export async function safeFetchText(url: string): Promise<string> {
   const res = await safeFetch(url);
-  const text = await res.text();
-  if (text.length > MAX_BODY_BYTES) {
-    throw new Oid4vcError("status_unavailable", `response body too large from ${url} (${text.length} bytes)`);
+  if (!res.body) throw new Oid4vcError("status_unavailable", `empty body from ${url}`);
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > MAX_BODY_BYTES) {
+        await reader.cancel();
+        throw new Oid4vcError("status_unavailable", `response body too large from ${url}`);
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
   }
-  return text;
+  return Buffer.concat(chunks).toString("utf8");
 }
 
 /**
