@@ -85,6 +85,22 @@ describe("assertSafeUrl", () => {
   it("still allows 127.0.0.1", () => {
     assert.doesNotThrow(() => assertSafeUrl("http://127.0.0.1:4001/"));
   });
+
+  // IPv4-mapped IPv6 SSRF bypass (WHATWG normalises to hex form)
+  it("blocks IPv4-mapped IPv6 ::ffff:10.0.0.1 (dotted-decimal form)", () => {
+    // Node's URL parser normalises ::ffff:10.0.0.1 → ::ffff:a00:1
+    assert.throws(() => assertSafeUrl("https://[::ffff:10.0.0.1]/"), /private/i);
+  });
+  it("blocks IPv4-mapped IPv6 ::ffff:169.254.169.254 (hex form after WHATWG normalisation)", () => {
+    // WHATWG normalises 169.254.169.254 → a9fe:a9fe
+    assert.throws(() => assertSafeUrl("https://[::ffff:169.254.169.254]/"), /private/i);
+  });
+  it("blocks IPv4-mapped IPv6 hex form ::ffff:a00:1 directly", () => {
+    assert.throws(() => assertSafeUrl("https://[::ffff:a00:1]/"), /private/i);
+  });
+  it("blocks IPv4-mapped IPv6 hex form ::ffff:a9fe:a9fe directly", () => {
+    assert.throws(() => assertSafeUrl("https://[::ffff:a9fe:a9fe]/"), /private/i);
+  });
 });
 
 describe("safeFetch redirect safety", () => {
@@ -100,6 +116,41 @@ describe("safeFetch redirect safety", () => {
       /private/i,
     );
     server.close();
+  });
+
+  it("safeFetch: Authorization header is NOT forwarded on cross-origin redirect", async () => {
+    // Server B: echo back the Authorization header (or its absence) in the response body.
+    let receivedAuthOnB: string | null = "not-yet-set";
+    const serverB = http.createServer((req, res) => {
+      receivedAuthOnB = req.headers["authorization"] ?? null;
+      res.writeHead(200, { "Content-Type": "text/plain" });
+      res.end("ok");
+    });
+    await new Promise<void>((resolve) => serverB.listen(0, "127.0.0.1", resolve));
+    const portB = (serverB.address() as { port: number }).port;
+
+    // Server A: redirect to server B (different port = different origin).
+    const serverA = http.createServer((_req, res) => {
+      res.writeHead(302, { Location: `http://127.0.0.1:${portB}/dest` });
+      res.end();
+    });
+    await new Promise<void>((resolve) => serverA.listen(0, "127.0.0.1", resolve));
+    const portA = (serverA.address() as { port: number }).port;
+
+    try {
+      await safeFetch(`http://127.0.0.1:${portA}/start`, {
+        headers: { Authorization: "Bearer secret-token" },
+      });
+      // Authorization must not have reached server B.
+      assert.equal(
+        receivedAuthOnB,
+        null,
+        "Authorization header must be stripped on cross-origin redirect",
+      );
+    } finally {
+      serverA.close();
+      serverB.close();
+    }
   });
 });
 

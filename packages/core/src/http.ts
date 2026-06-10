@@ -41,11 +41,27 @@ function isPrivateIPv4(hostname: string): boolean {
 }
 
 /**
- * Returns true if `hostname` is a ULA (fc00::/7) or link-local (fe80::/10) IPv6 address.
+ * Returns true if `hostname` is a ULA (fc00::/7), link-local (fe80::/10), or
+ * IPv4-mapped IPv6 address (::ffff:0:0/96) that embeds a private IPv4 address.
  * Input may or may not be bracket-wrapped.
  */
 function isPrivateIPv6(hostname: string): boolean {
   const h = hostname.startsWith("[") ? hostname.slice(1, -1) : hostname;
+  // IPv4-mapped IPv6: ::ffff:x.x.x.x (dotted-decimal) or ::ffff:hhhh:hhhh (hex groups).
+  // WHATWG URL normalization converts dotted-decimal to hex, so we must handle both forms.
+  const v4mapped =
+    h.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/i) ??
+    h.match(/^::ffff:([0-9a-f]+):([0-9a-f]+)$/i);
+  if (v4mapped) {
+    if (v4mapped.length === 3) {
+      // Hex form: ::ffff:0a00:0001 → decode to 10.0.0.1
+      const hi = parseInt(v4mapped[1], 16);
+      const lo = parseInt(v4mapped[2], 16);
+      const dotted = `${hi >> 8}.${hi & 0xff}.${lo >> 8}.${lo & 0xff}`;
+      return isPrivateIPv4(dotted);
+    }
+    return isPrivateIPv4(v4mapped[1]);
+  }
   // ULA: fc00::/7 — addresses starting with fc or fd
   if (/^fc/i.test(h) || /^fd/i.test(h)) return true;
   // Link-local: fe80::/10 — fe80..feb (first two hex digits fe, third digit 8-b)
@@ -58,6 +74,11 @@ function isPrivateIPv6(hostname: string): boolean {
  *   1. Must be a valid URL.
  *   2. Must not be a private/link-local IPv4 or IPv6 address (blocks SSRF even over HTTPS).
  *   3. Must use HTTPS, OR be directed at a loopback host (localhost / 127.0.0.1 / ::1).
+ *
+ * Note: this check operates on URL syntax only (IP literals and hostnames).
+ * DNS rebinding — where a hostname initially resolves to a public IP but later
+ * resolves to a private one — requires a dispatcher-level lookup hook and is
+ * out of scope here. See ROADMAP.
  *
  * Throws Oid4vcError("invalid_request") if any check fails.
  */
@@ -91,17 +112,24 @@ export function assertSafeUrl(rawUrl: string): URL {
  * Fetch `url` with a 5-second timeout per hop.  Follows redirects manually so each hop
  * is re-validated through assertSafeUrl — this prevents redirect-to-private-IP attacks.
  *
+ * On cross-origin redirects, credential headers (Authorization, Cookie, Cookie2) are
+ * stripped and (for 301/302/303) the method is converted to GET per RFC 9110 §15.4.
+ * Once stripped, credentials are never re-added even if a later hop returns to the
+ * original origin.
+ *
  * Throws on network error, non-2xx status, or an unsafe URL (see assertSafeUrl).
  */
 export async function safeFetch(url: string, init?: RequestInit): Promise<Response> {
   assertSafeUrl(url);
   let current = url;
+  // currentInit carries credential-stripping forward across hops; signal is added inline.
+  let currentInit: RequestInit = { ...(init ?? {}) };
   for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
     let res: Response;
     try {
-      res = await fetch(current, { ...init, redirect: "manual", signal: controller.signal });
+      res = await fetch(current, { ...currentInit, redirect: "manual", signal: controller.signal });
     } catch (e) {
       throw new Oid4vcError("status_unavailable", `network error fetching ${current}: ${(e as Error).message}`);
     } finally {
@@ -113,6 +141,21 @@ export async function safeFetch(url: string, init?: RequestInit): Promise<Respon
       const resolved = new URL(location, current).toString();
       // Re-validate each redirect hop — closes the redirect-to-private-IP vector (#2).
       assertSafeUrl(resolved);
+      // Strip credentials on cross-origin redirect (RFC 9110 §15.4).
+      // Once stripped, credentials are never restored even for later same-origin hops.
+      if (new URL(resolved).origin !== new URL(current).origin) {
+        const headers = new Headers(currentInit.headers as ConstructorParameters<typeof Headers>[0]);
+        headers.delete("authorization");
+        headers.delete("cookie");
+        headers.delete("cookie2");
+        if (res.status === 301 || res.status === 302 || res.status === 303) {
+          // Convert to GET and drop body for 301/302/303 cross-origin redirects.
+          currentInit = { headers, method: "GET", body: undefined };
+        } else {
+          // 307/308: preserve method and body, but still strip credentials.
+          currentInit = { ...currentInit, headers, body: undefined };
+        }
+      }
       current = resolved;
       continue;
     }
