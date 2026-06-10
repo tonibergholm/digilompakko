@@ -27,9 +27,9 @@ const MDL_CONFIG_ID = "org.iso.18013.5.1.mDL";
  * Wallet trust configuration.
  *
  * `trustedVerifierOrigins` is a pre-configured allowlist of verifier base URLs.  The wallet will
- * ONLY fetch JWKS from — and accept JARs signed by — verifiers whose `client_id` starts with one
- * of these origins.  This is the anchor that prevents an attacker from substituting an arbitrary
- * key-fetch URL via a crafted `client_id` (HIGH-1 fix).
+ * ONLY fetch JWKS from — and accept JARs signed by — verifiers whose `client_id` URL origin
+ * exactly matches one of these origins (URL.origin equality, not prefix matching).  This prevents
+ * both attacker-controlled JWKS URLs and subdomain-bypass attacks (HIGH-1 / #6 fixes).
  *
  * `walletAudience` is this wallet's own identifier; it must appear in the `aud` claim of every
  * signed request object (RFC 9101 §4).  Agreed out-of-band with each registered verifier.
@@ -141,6 +141,14 @@ export class Wallet {
         ? await this.buildMdocPresentation(request, revealOverride)
         : await this.buildSdJwtPresentation(request, revealOverride);
 
+    // OID4VP §6.2: response_uri MUST share origin with client_id to prevent PII exfiltration.
+    if (new URL(request.response_uri).origin !== new URL(request.client_id).origin) {
+      throw new Oid4vcError(
+        "invalid_request",
+        "response_uri origin does not match client_id origin",
+      );
+    }
+
     const postRes = await safeFetch(request.response_uri, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -174,8 +182,13 @@ export class Wallet {
     const clientId = peekPayload(raw.request).client_id as string | undefined;
     if (!clientId) throw new Oid4vcError("invalid_request", "request object missing client_id");
 
-    // Trust gate: only proceed if the client_id origin is in our pre-configured allowlist.
-    const trustedOrigin = this.config.trustedVerifierOrigins.find((o) => clientId.startsWith(o));
+    // Trust gate: only proceed if the client_id origin exactly matches one in our pre-configured allowlist.
+    // URL.origin equality prevents startsWith bypass (e.g. http://localhost:4002.evil.com passing
+    // when allowlist contains http://localhost:4002).
+    const clientOrigin = new URL(clientId).origin;
+    const trustedOrigin = this.config.trustedVerifierOrigins.find(
+      (o) => new URL(o).origin === clientOrigin,
+    );
     if (!trustedOrigin) {
       throw new Oid4vcError("access_denied", `untrusted verifier origin: ${clientId}`, 403);
     }
